@@ -1,0 +1,23 @@
+[package]
+name = "initiative_manager"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies.iced]
+version = "0.3.0"
+default-features = false
+# for release
+features = ["glow"]
+# for debug
+#features = ["glow", "debug"]
+
+[dependencies.iced_aw]
+git = "https://github.com/iced-rs/iced_aw"
+branch = "main"
+default-features = false
+features = ["tabs", "colors", "icons"]
+
+[dependencies]
+iced_native = "0.4.0"
+anyhow = "1.0.38"
+itertools = "0.10.0"
