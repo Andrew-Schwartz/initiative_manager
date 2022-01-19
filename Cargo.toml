@@ -1,7 +1,7 @@
 [package]
 name = "initiative_manager"
-version = "0.1.0"
-edition = "2018"
+version = "1.0.0"
+edition = "2021"
 
 [dependencies.iced]
 version = "0.3.0"
@@ -19,5 +19,9 @@ features = ["tabs", "colors", "icons"]
 
 [dependencies]
 iced_native = "0.4.0"
+iced_futures = { version = "0.3.0", features = ["tokio"] }
 anyhow = "1.0.38"
-itertools = "0.10.0"
+itertools = "0.10.3"
+rand = "0.8.4"
+roman = "0.1.6"
+regex = "1.5.4"

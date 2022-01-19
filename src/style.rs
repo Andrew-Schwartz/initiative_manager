@@ -1,5 +1,3 @@
-#![feature(const_fn_floating_point_arithmetic)]
-
 use std::fmt::{self, Display};
 use std::ops::Not;
 
@@ -76,6 +74,12 @@ pub struct InitiativeTableStyle {
     alt: Option<bool>,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum InitiativeTableBorderStyle {
+    Light,
+    Dark,
+}
+
 impl Style {
     pub fn settings_bar(self) -> SettingsBarStyle {
         match self {
@@ -88,6 +92,13 @@ impl Style {
         InitiativeTableStyle {
             style: self,
             alt: (n != 0).then(|| n % 2 == 1),
+        }
+    }
+
+    pub fn initiative_table_border(self) -> InitiativeTableBorderStyle {
+        match self {
+            Self::Light => InitiativeTableBorderStyle::Light,
+            Self::Dark => InitiativeTableBorderStyle::Dark,
         }
     }
 }
@@ -134,13 +145,17 @@ from! { SettingsBarStyle =>
     container: dark = SettingsContainer;
 }
 
+from! { InitiativeTableBorderStyle =>
+    container: dark = InitiativeTableBorder;
+}
+
 // from! { InitiativeTableStyle =>
 //     button: dark = InitiativeTable
 // }
 
 // todo epic macro for this too :)
 impl From<InitiativeTableStyle> for Box<dyn container::StyleSheet> {
-    fn from(InitiativeTableStyle { style, alt, .. }: InitiativeTableStyle) -> Self {
+    fn from(InitiativeTableStyle { style, alt }: InitiativeTableStyle) -> Self {
         match style {
             Style::Light => Default::default(),
             Style::Dark => dark::InitiativeTable(alt).into(),
@@ -149,6 +164,15 @@ impl From<InitiativeTableStyle> for Box<dyn container::StyleSheet> {
 }
 
 impl From<InitiativeTableStyle> for Box<dyn button::StyleSheet> {
+    fn from(InitiativeTableStyle { style, alt }: InitiativeTableStyle) -> Self {
+        match style {
+            Style::Light => Default::default(),
+            Style::Dark => dark::InitiativeTable(alt).into(),
+        }
+    }
+}
+
+impl From<InitiativeTableStyle> for Box<dyn text_input::StyleSheet> {
     fn from(InitiativeTableStyle { style, alt }: InitiativeTableStyle) -> Self {
         match style {
             Style::Light => Default::default(),
@@ -203,6 +227,7 @@ mod light {
 mod dark {
     use iced::{Background, button, checkbox, Color, container, pick_list, scrollable, slider, text_input};
     use iced::slider::{Handle, HandleShape};
+    use iced::text_input::Style;
     use iced_aw::tabs;
     use crate::utils::ColorExt;
 
@@ -261,6 +286,7 @@ mod dark {
     impl container::StyleSheet for InitiativeTable {
         fn style(&self) -> container::Style {
             container::Style {
+                border_radius: 2.0,
                 background: color::alternating::background(self.0).into(),
                 border_color: Default::default(),
                 text_color: color::alternating::text(self.0).into(),
@@ -293,6 +319,51 @@ mod dark {
         }
     }
 
+    impl text_input::StyleSheet for InitiativeTable {
+        fn active(&self) -> text_input::Style {
+            text_input::Style {
+                background: Color::TRANSPARENT.into(),
+                border_radius: 0.0,
+                border_width: 0.0,
+                border_color: Default::default()
+            }
+        }
+
+        fn focused(&self) -> text_input::Style {
+            TextInput.focused()
+        }
+
+        fn placeholder_color(&self) -> Color {
+            TextInput.placeholder_color()
+        }
+
+        fn value_color(&self) -> Color {
+            TextInput.value_color()
+        }
+
+        fn selection_color(&self) -> Color {
+            TextInput.selection_color()
+        }
+
+        fn hovered(&self) -> Style {
+            TextInput.hovered()
+        }
+    }
+
+    pub struct InitiativeTableBorder;
+
+    impl container::StyleSheet for InitiativeTableBorder {
+        fn style(&self) -> container::Style {
+            container::Style {
+                border_radius: 5.0,
+                border_width: 1.0,
+                border_color: Color::BLACK.a(0.6),
+                ..Container.style()
+            }
+        }
+    }
+
+    // todo rename this DefaultDark and combine all of em
     pub struct Container;
 
     impl container::StyleSheet for Container {
