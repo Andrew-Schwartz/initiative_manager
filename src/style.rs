@@ -225,10 +225,12 @@ mod light {
 
 #[allow(clippy::cast_precision_loss)]
 mod dark {
-    use iced::{Background, button, checkbox, Color, container, pick_list, scrollable, slider, text_input};
+    use iced::{Background, button, checkbox, Color, container, pick_list, progress_bar, scrollable, slider, text_input};
     use iced::slider::{Handle, HandleShape};
     use iced::text_input::Style;
     use iced_aw::tabs;
+
+    use crate::SettingsBarStyle;
     use crate::utils::ColorExt;
 
     mod color {
@@ -252,6 +254,16 @@ mod dark {
             use iced::Color;
 
             pub const BACKGROUND: Color = color!(rgb 0x2E 0x2F 0x37);
+        }
+
+        pub mod settings_bar {
+            use iced::Color;
+
+            pub const PROGRESS_BAR: Color = Color::from_rgb(
+                0x3E as f32 / 255.0,
+                0x3F as f32 / 255.0,
+                0x47 as f32 / 255.0,
+            );
         }
 
         pub mod alternating {
@@ -644,6 +656,16 @@ mod dark {
             container::Style {
                 background: Some(Background::Color(color::tab_bar::BACKGROUND)),
                 ..Container.style()
+            }
+        }
+    }
+
+    impl progress_bar::StyleSheet for SettingsBarStyle {
+        fn style(&self) -> progress_bar::Style {
+            progress_bar::Style {
+                background: color::settings_bar::PROGRESS_BAR.into(),
+                bar: color::ACTIVE.into(),
+                border_radius: 5.0,
             }
         }
     }

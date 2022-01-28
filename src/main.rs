@@ -1,20 +1,25 @@
 #![feature(array_windows)]
 #![feature(array_chunks)]
 
+use std::time::Duration;
+
 use iced::*;
 use iced::tooltip::Position;
 use iced_aw::{Icon, ICON_FONT};
 use iced_native::Event;
 use itertools::Itertools;
 use rand::Rng;
+use self_update::cargo_crate_version;
+
 use utils::Hp;
 
-use crate::style::Style;
+use crate::style::{SettingsBarStyle, Style};
 use crate::utils::{censor_name, SpacingExt, Tap, TextInputState, ToggleButtonState, TooltipExt};
 
 mod style;
 mod utils;
 mod hotkey;
+mod update;
 
 #[derive(Debug)]
 struct Entity {
@@ -62,8 +67,9 @@ struct NewEntity {
     hidden: bool,
 }
 
-#[derive(Default)]
-struct Window {
+pub struct InitiativeManager {
+    update_state: UpdateState,
+    update_url: String,
     visible: ToggleButtonState,
     style: Style,
     width: u32,
@@ -79,6 +85,7 @@ struct Window {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Update(update::Message),
     ToggleVisibility,
     ToggleStyle,
     Resize(u32, u32),
@@ -104,13 +111,15 @@ pub enum Message {
     PrevTurn,
 }
 
-impl Application for Window {
-    type Executor = iced::executor::Default;
+impl Application for InitiativeManager {
+    type Executor = iced_futures::executor::Tokio;
     type Message = Message;
     type Flags = (u32, u32);
 
     fn new((width, height): Self::Flags) -> (Self, Command<Message>) {
         let window = Self {
+            update_state: UpdateState::Checking,
+            update_url: "".to_string(),
             visible: ToggleButtonState::new(true, Icon::EyeSlashFill, Icon::EyeFill),
             style: Default::default(),
             width,
@@ -129,7 +138,12 @@ impl Application for Window {
             next_turn: Default::default(),
             prev_turn: Default::default(),
         };
-        (window, Command::none())
+        let command = async {
+            // wait briefly to so that loading doesn't take so long
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            Message::Update(update::Message::CheckForUpdate)
+        }.into();
+        (window, command)
     }
 
     fn title(&self) -> String {
@@ -138,6 +152,9 @@ impl Application for Window {
 
     fn update(&mut self, message: Self::Message, _: &mut iced::Clipboard) -> Command<Message> {
         match message {
+            Message::Update(msg) => if let Err(e) = update::handle(self, msg) {
+                self.update_state = UpdateState::Errored(e.to_string())
+            },
             Message::ToggleVisibility => self.visible.invert(),
             Message::ToggleStyle => self.style = !self.style,
             Message::Resize(width, height) => {
@@ -286,7 +303,7 @@ impl Application for Window {
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
-        iced_native::subscription::events_with(|event, _status| {
+        let listeners = iced_native::subscription::events_with(|event, _status| {
             match event {
                 Event::Keyboard(e) => hotkey::handle(e),
                 Event::Window(e) => match e {
@@ -298,7 +315,18 @@ impl Application for Window {
                 // Event::Touch(_) => None,
                 _ => None
             }
-        })
+        });
+        match &self.update_state {
+            UpdateState::Ready | UpdateState::Downloading(_) => {
+                let download = Subscription::from_recipe(update::Download { url: self.update_url.clone() })
+                    .map(|p| Message::Update(update::Message::Progress(p)));
+                Subscription::batch([
+                    listeners,
+                    download,
+                ])
+            }
+            _ => listeners
+        }
     }
 
     fn view(&mut self) -> Element<'_, Self::Message> {
@@ -671,8 +699,10 @@ impl Application for Window {
 
         let bottom_bar = Container::new(Row::new()
             .spacing(2)
-            .push(toggle_visibility)
+            .push_space(4)
+            .push(self.update_state.view(style.settings_bar()))
             .push_space(Length::Fill)
+            .push(toggle_visibility)
             .push(toggle_style)
             .height(Length::Units(20))
             .align_items(Align::Center)
@@ -698,9 +728,14 @@ impl Application for Window {
 }
 
 fn main() {
+    if let Some("TARGET") = std::env::args().nth(1).as_deref() {
+        println!("{}", self_update::get_target());
+        return;
+    }
+
     let mut size = iced::window::Settings::default().size;
     size.1 = (size.1 as f64 * 0.9) as _;
-    <Window as iced::Application>::run(Settings {
+    <InitiativeManager as iced::Application>::run(Settings {
         antialiasing: true,
         default_font: Some(include_bytes!("../resources/arial.ttf")),
         window: iced::window::Settings {
@@ -712,4 +747,41 @@ fn main() {
         flags: size,
         ..Default::default()
     }).unwrap();
+}
+
+#[derive(Debug)]
+pub enum UpdateState {
+    Checking,
+    Ready,
+    Downloading(f32),
+    UpToDate,
+    Downloaded,
+    Errored(String),
+}
+
+impl UpdateState {
+    pub fn view(&self, style: SettingsBarStyle) -> Element<crate::Message> {
+        const VER: &str = cargo_crate_version!();
+        match self {
+            &Self::Downloading(pct) => {
+                Row::new()
+                    .align_items(Align::Center)
+                    .push(Text::new("Downloading").size(10))
+                    .push_space(5)
+                    .push(ProgressBar::new(0.0..=100.0, pct)
+                        .style(style)
+                        .height(Length::Units(12)) // bottom bar is 20 pts
+                        .width(Length::Units(100)))
+                    .into()
+            }
+            view_as_text => match view_as_text {
+                Self::Checking => Text::new("Checking for updates..."),
+                Self::Ready => Text::new("Preparing to download..."),
+                Self::Downloaded => Text::new("Downloaded new version! Restart program to get new features!"),
+                Self::UpToDate => Text::new(format!("Up to date, v{}", VER)),
+                Self::Errored(e) => Text::new(format!("Error downloading new version: {}. Running v{}", e, VER)),
+                Self::Downloading(_) => unreachable!(),
+            }.size(10).into()
+        }
+    }
 }

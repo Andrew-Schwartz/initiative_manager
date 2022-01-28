@@ -1,6 +1,6 @@
 [package]
 name = "initiative_manager"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 
 [dependencies.iced]
@@ -25,3 +25,8 @@ itertools = "0.10.3"
 rand = "0.8.4"
 roman = "0.1.6"
 regex = "1.5.4"
+reqwest = "0.11.9"
+self_update = "0.28.0"
+semver = "1.0.4"
+tempfile = "3.3.0"
+tokio = { version = "1.15.0", features = ["time"] }

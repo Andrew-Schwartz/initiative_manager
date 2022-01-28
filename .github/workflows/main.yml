@@ -1,0 +1,107 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+      - run: sudo apt install libxkbcommon-dev
+        if: matrix.os == 'ubuntu-latest'
+      - name: Build
+        run: cargo b --release
+      - run: |
+          dir=artifact-${{ matrix.os }}
+          mkdir $dir
+          echo "$(cargo r --release -- TARGET)" > $dir/TARGET
+          mv target/release/initiative_manager $dir/initiative_manager
+        if: matrix.os != 'windows-latest'
+      - run: |
+          $dir="artifact-${{ matrix.os }}"
+          mkdir $dir
+          echo "$(cargo r --release -- TARGET)" > $dir/TARGET
+          mv target/release/initiative_manager.exe $dir/initiative_manager.exe
+        if: matrix.os == 'windows-latest'
+      - uses: actions/upload-artifact@v2.3.1
+        with:
+          name: artifact-${{ matrix.os }}
+          path: artifact-${{ matrix.os }}
+          if-no-files-found: error
+        if: matrix.os != 'windows-latest'
+      - uses: actions/upload-artifact@v2.3.1
+        with:
+          name: artifact-${{ matrix.os }}
+          path: artifact-${{ matrix.os }}
+          if-no-files-found: error
+        if: matrix.os == 'windows-latest'
+
+  release:
+    needs: [ build ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v1
+        with:
+          name: artifact-ubuntu-latest
+      - uses: actions/download-artifact@v1
+        with:
+          name: artifact-macos-latest
+      - uses: actions/download-artifact@v1
+        with:
+          name: artifact-windows-latest
+      - name: Create Draft Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v1.1.0
+          release_name: v1.1.0 Programs for windows, linux, and mac
+          draft: true
+          prerelease: false
+      - name: Get Names
+        id: names
+        run: |
+          echo "::set-output name=ubuntu::$(cat artifact-ubuntu-latest/TARGET)"
+          echo "::set-output name=macos::$(cat artifact-macos-latest/TARGET)"
+          echo "::set-output name=windows::$(cat artifact-windows-latest/TARGET)"
+      - uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifact-ubuntu-latest/initiative_manager
+          asset_name: initiative_manager-${{ steps.names.outputs.ubuntu }}
+          asset_content_type: application/zip
+      - uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifact-macos-latest/initiative_manager
+          asset_name: initiative_manager-${{ steps.names.outputs.macos }}
+          asset_content_type: application/zip
+      - uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifact-windows-latest/initiative_manager.exe
+          asset_name: initiative_manager-${{ steps.names.outputs.windows }}.exe
+          asset_content_type: application/zip
+      - uses: eregon/publish-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          release_id: ${{ steps.create_release.outputs.id }}
