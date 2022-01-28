@@ -9,10 +9,10 @@ pub enum Message {
 
 pub fn handle(event: keyboard::Event) -> Option<crate::Message> {
     type Modifiers = (bool, bool, bool);
-    const CTRL: Modifiers = (true, false, false);
+    // const CTRL: Modifiers = (true, false, false);
     const SHIFT: Modifiers = (false, false, true);
-    const CTRL_ALT: Modifiers = (true, true, false);
-    const CTRL_SHIFT: Modifiers = (true, false, true);
+    // const CTRL_ALT: Modifiers = (true, true, false);
+    // const CTRL_SHIFT: Modifiers = (true, false, true);
     const NONE: Modifiers = (false, false, false);
 
     match event {

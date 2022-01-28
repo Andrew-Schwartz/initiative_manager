@@ -1,3 +1,21 @@
+// ignored on other targets
+#![windows_subsystem = "windows"]
+
+#![warn(clippy::pedantic)]
+// @formatter:off
+#![allow(
+clippy::too_many_lines,
+clippy::default_trait_access,
+clippy::wildcard_imports,
+clippy::module_name_repetitions,
+clippy::cast_precision_loss,
+clippy::cast_possible_truncation,
+clippy::cast_sign_loss,
+clippy::cast_lossless,
+clippy::cast_possible_wrap,
+)]
+// @formatter:on
+
 #![feature(array_windows)]
 #![feature(array_chunks)]
 
@@ -153,7 +171,7 @@ impl Application for InitiativeManager {
     fn update(&mut self, message: Self::Message, _: &mut iced::Clipboard) -> Command<Message> {
         match message {
             Message::Update(msg) => if let Err(e) = update::handle(self, msg) {
-                self.update_state = UpdateState::Errored(e.to_string())
+                self.update_state = UpdateState::Errored(e.to_string());
             },
             Message::ToggleVisibility => self.visible.invert(),
             Message::ToggleStyle => self.style = !self.style,
@@ -289,7 +307,7 @@ impl Application for InitiativeManager {
                 if let Some(entity) = self.entities.get_mut(self.turn) {
                     entity.reaction_free.value = true;
                     if let Some((tot, left)) = &mut entity.legendary_actions {
-                        *left = *tot
+                        *left = *tot;
                     }
                 }
             }
@@ -434,7 +452,7 @@ impl Application for InitiativeManager {
                         .on_press(Message::ToggleHidden(idx));
                     let name = Button::new(
                         remove_state, Text::new(if is_visible {
-                            name.to_string()
+                            (*name).to_string()
                         } else {
                             // censored_name.clone()
                             censor_name(name)
@@ -535,7 +553,7 @@ impl Application for InitiativeManager {
                     ).style(style)
                         .padding(0);
                     if move_up {
-                        up = up.on_press(Message::MoveUp(idx))
+                        up = up.on_press(Message::MoveUp(idx));
                     }
                     let mut down = Button::new(
                         init_down,
@@ -760,6 +778,7 @@ pub enum UpdateState {
 }
 
 impl UpdateState {
+    #[must_use]
     pub fn view(&self, style: SettingsBarStyle) -> Element<crate::Message> {
         const VER: &str = cargo_crate_version!();
         match self {

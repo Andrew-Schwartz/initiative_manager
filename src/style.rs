@@ -283,13 +283,13 @@ mod dark {
                 }
             }
 
-            pub fn hovered(alternate: Option<bool>) -> Color {
-                match alternate {
-                    None => color!(rgb 0xD1 0xD1 0x71),
-                    Some(true) => color!(rgb 0x30 0x33 0x35),
-                    Some(false) => color!(rgba 0 0 0 0),
-                }
-            }
+            // pub fn hovered(alternate: Option<bool>) -> Color {
+            //     match alternate {
+            //         None => color!(rgb 0xD1 0xD1 0x71),
+            //         Some(true) => color!(rgb 0x30 0x33 0x35),
+            //         Some(false) => color!(rgba 0 0 0 0),
+            //     }
+            // }
         }
     }
 
@@ -317,13 +317,7 @@ mod dark {
         }
 
         fn hovered(&self) -> button::Style {
-            let mut style = self.active();
-            match self.0 {
-                None => {}
-                Some(true) => {}
-                Some(false) => {}
-            };
-            style
+            self.active()
         }
 
         fn pressed(&self) -> button::Style {

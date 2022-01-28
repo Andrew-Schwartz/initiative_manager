@@ -181,7 +181,7 @@ impl ToggleButtonState {
     }
 
     pub fn button<M: Clone>(&mut self) -> Button<M> {
-        let label = self.states[self.value as usize];
+        let label = self.states[usize::from(self.value)];
         Button::new(
             &mut self.state,
             Text::new(label)
@@ -191,7 +191,7 @@ impl ToggleButtonState {
     }
 
     pub fn button_with<M: Clone, F: FnOnce(Text) -> Text>(&mut self, text_config: F) -> Button<M> {
-        let label = self.states[self.value as usize];
+        let label = self.states[usize::from(self.value)];
         Button::new(
             &mut self.state,
             text_config(Text::new(label)
