@@ -331,12 +331,15 @@ mod dark {
                 background: Color::TRANSPARENT.into(),
                 border_radius: 0.0,
                 border_width: 0.0,
-                border_color: Default::default()
+                border_color: Default::default(),
             }
         }
 
         fn focused(&self) -> text_input::Style {
-            TextInput.focused()
+            text_input::Style {
+                border_color: Color::TRANSPARENT,
+                ..TextInput.focused()
+            }
         }
 
         fn placeholder_color(&self) -> Color {
@@ -352,7 +355,10 @@ mod dark {
         }
 
         fn hovered(&self) -> Style {
-            TextInput.hovered()
+            text_input::Style {
+                border_color: Color::TRANSPARENT,
+                ..TextInput.hovered()
+            }
         }
     }
 

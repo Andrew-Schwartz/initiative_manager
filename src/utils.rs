@@ -1,7 +1,7 @@
 use std::fmt::Display;
 use std::str::FromStr;
 
-use iced::{button, Button, Color, Column, Element, HorizontalAlignment, Length, Row, Scrollable, Space, Text, text_input, TextInput, Tooltip};
+use iced::{button, Button, Color, Column, Element, HorizontalAlignment, Length, Row, Rule, Scrollable, Space, Text, text_input, TextInput, Tooltip};
 use iced_aw::Icon;
 use iced_native::tooltip::Position;
 use itertools::Itertools;
@@ -10,11 +10,17 @@ use regex::Regex;
 
 pub trait SpacingExt {
     fn push_space<L: Into<Length>>(self, length: L) -> Self;
+
+    fn push_rule(self, spacing: u16) -> Self;
 }
 
 impl<'a, Message: 'a> SpacingExt for Column<'a, Message> {
     fn push_space<L: Into<Length>>(self, length: L) -> Self {
         self.push(Space::with_height(length.into()))
+    }
+
+    fn push_rule(self, spacing: u16) -> Self {
+        self.push(Rule::horizontal(spacing))
     }
 }
 
@@ -22,11 +28,19 @@ impl<'a, Message: 'a> SpacingExt for Row<'a, Message> {
     fn push_space<L: Into<Length>>(self, length: L) -> Self {
         self.push(Space::with_width(length.into()))
     }
+
+    fn push_rule(self, spacing: u16) -> Self {
+        self.push(Rule::vertical(spacing))
+    }
 }
 
 impl<'a, Message: 'a> SpacingExt for Scrollable<'a, Message> {
     fn push_space<L: Into<Length>>(self, length: L) -> Self {
         self.push(Space::with_height(length.into()))
+    }
+
+    fn push_rule(self, spacing: u16) -> Self {
+        self.push(Rule::horizontal(spacing))
     }
 }
 
