@@ -19,6 +19,7 @@ clippy::cast_possible_wrap,
 #![feature(array_windows)]
 #![feature(array_chunks)]
 
+use std::fs;
 use std::fs::{FileType, OpenOptions};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -50,9 +51,9 @@ static SAVE_DIR: Lazy<PathBuf> = Lazy::new(|| {
     std::fs::create_dir_all(&path).unwrap();
     path
 });
-static PCS_DIR: Lazy<PathBuf> = Lazy::new(|| {
+static PARTY_DIR: Lazy<PathBuf> = Lazy::new(|| {
     let path = SAVE_DIR.clone()
-        .join("pcs");
+        .join("party");
     std::fs::create_dir_all(&path).unwrap();
     path
 });
@@ -115,6 +116,178 @@ struct Pc {
     hp: u32,
 }
 
+#[derive(Deserialize, Serialize)]
+struct Enemy {
+    name: String,
+    hp: u32,
+    legendary_actions: Option<u32>,
+    initiative: u32,
+    hidden: bool,
+}
+
+enum SaveMode {
+    None,
+    SaveEncounter(TextInputState, button::State),
+    DeleteEncounter(String, TextInputState, button::State),
+    LoadEncounter(String, button::State, scrollable::State, Vec<Enemy>),
+    SaveParty(TextInputState, button::State),
+    DeleteParty(String, TextInputState, button::State),
+    LoadParty(String, button::State, scrollable::State, Vec<(Pc, TextInputState)>),
+}
+
+impl SaveMode {
+    fn view(&mut self, style: Style) -> Element<Message> {
+        match self {
+            SaveMode::None => Space::new(Length::Shrink, Length::Shrink).into(),
+            SaveMode::SaveEncounter(text, button) => {
+                let savable = !text.content.is_empty();
+                let encounter_name = text.text_input("Encounter Name", Message::EncounterName)
+                    .style(style)
+                    .tap_if(savable, |text| text.on_submit(Message::SaveEncounter));
+                let submit = Button::new(button, Text::new("Submit").size(16))
+                    .style(style)
+                    .tap_if(savable, |btn| btn.on_press(Message::SaveEncounter));
+                Row::new()
+                    .align_items(Align::Center)
+                    .push(encounter_name)
+                    .push_space(8)
+                    .push(submit)
+                    .into()
+            }
+            SaveMode::DeleteEncounter(name, text, button) => {
+                let matches = text.content == *name;
+                let encounter_name = text.text_input("Delete", Message::EncounterName)
+                    .style(style)
+                    .tap_if(matches, |txt| txt.on_submit(Message::DeleteEncounter(name.clone())));
+                let submit = Button::new(
+                    button,
+                    Text::new(format!("Type '{name}' to confirm")).size(16),
+                ).style(style)
+                    .tap_if(matches, |btn| btn.on_press(Message::DeleteEncounter(name.clone())));
+                Row::new()
+                    .align_items(Align::Center)
+                    .push(encounter_name)
+                    .push_space(8)
+                    .push(submit)
+                    .into()
+            }
+            SaveMode::LoadEncounter(name, submit, scroll, enemies) => {
+                let submit = Button::new(
+                    submit,
+                    Text::new("Confirm"),
+                ).style(style)
+                    .on_press(Message::LoadParty(name.clone()));
+
+                let [names, hps, las, inits] = enemies.into_iter()
+                    .fold(["Name (Hidden)", "HP", "Leg. Acts.", "Initiative"].map(|title| vec![Element::from(Text::new(title))]),
+                          |[mut names, mut hps, mut las, mut inits], Enemy { name, hp, legendary_actions, initiative, hidden }| {
+                              let name = Text::new(format!("{name} ({})", if *hidden { '✔' } else { '❌' })).size(16);
+                              names.push(name.into());
+
+                              let hp = Text::new(hp.to_string()).size(16);
+                              hps.push(hp.into());
+
+                              if let Some(la) = legendary_actions {
+                                  let la = Text::new(roman::to(*la as _).unwrap()).size(16);
+                                  las.push(la.into());
+                              }
+
+                              let init = Text::new(initiative.to_string()).size(16);
+                              inits.push(init.into());
+
+                              [names, hps, las, inits]
+                          });
+                let table = Scrollable::new(scroll)
+                    .push(Row::new()
+                        .push(Column::with_children(names).spacing(5))
+                        .push_space(Length::Fill)
+                        .push(Column::with_children(hps).spacing(5))
+                        .tap_if(las.len() > 1, |row| row
+                            .push_space(Length::Fill)
+                            .push(Column::with_children(las).spacing(5)))
+                        .push_space(Length::Fill)
+                        .push(Column::with_children(inits).spacing(5))
+                    );
+
+                Column::new()
+                    .align_items(Align::Center)
+                    .push(submit)
+                    .push_space(7)
+                    .push(table)
+                    .into()
+            }
+            SaveMode::SaveParty(text, button) => {
+                let savable = !text.content.is_empty();
+                let party_name = text.text_input("Party Name", Message::PartyName)
+                    .style(style)
+                    .tap_if(savable, |txt| txt.on_submit(Message::SaveParty));
+                let submit = Button::new(button, Text::new("Submit"))
+                    .style(style)
+                    .tap_if(savable, |btn| btn.on_press(Message::SaveParty));
+                Row::new()
+                    .align_items(Align::Center)
+                    .push(party_name)
+                    .push_space(8)
+                    .push(submit)
+                    .into()
+            }
+            SaveMode::DeleteParty(name, text, button) => {
+                let matches = text.content == *name;
+                let party_name = text.text_input("Delete", Message::PartyName)
+                    .style(style)
+                    .tap_if(matches, |txt| txt.on_submit(Message::DeleteParty(name.clone())));
+                let submit = Button::new(
+                    button,
+                    Text::new(format!("Type '{name}' to confirm"))
+                        .size(16),
+                ).style(style)
+                    .tap_if(matches, |btn| btn.on_press(Message::DeleteParty(name.clone())));
+                Row::new()
+                    .align_items(Align::Center)
+                    .push(party_name)
+                    .push_space(8)
+                    .push(submit)
+                    .into()
+            }
+            SaveMode::LoadParty(party_name, button, scroll, rows) => {
+                let all_entered = rows.iter().all(|(_, txt)| !txt.content.is_empty());
+                let button = Button::new(button, Text::new("Submit Initiatives"))
+                    .style(style)
+                    .tap_if(all_entered, |b| b.on_press(Message::LoadParty(party_name.clone())));
+
+                let (names, inits) = rows.iter_mut()
+                    .enumerate()
+                    .fold(
+                        (Column::new().align_items(Align::Start).spacing(5), Column::new().align_items(Align::End).spacing(5)),
+                        |(names, inits), (i, (pc, text))| {
+                            let names = names.push(Text::new(&pc.name));
+                            let text = text.text_input("Initiative", move |str| Message::PcInitiative(i, str))
+                                .style(style)
+                                .tap_if(all_entered, |txt| txt.on_submit(Message::LoadParty(party_name.clone())));
+                            let inits = inits.push(text);
+                            (names, inits)
+                        },
+                    );
+                let scrollable = Scrollable::new(scroll)
+                    .push(Row::new().push(names).push_space(12).push(inits));
+
+                Column::new()
+                    .align_items(Align::Center)
+                    .push(button)
+                    .push_space(10)
+                    .push(scrollable)
+                    .into()
+            }
+        }
+    }
+}
+
+impl Default for SaveMode {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 pub struct InitiativeManager {
     update_state: UpdateState,
     update_url: String,
@@ -130,11 +303,12 @@ pub struct InitiativeManager {
     next_turn: button::State,
     prev_turn: button::State,
     save_encounter: button::State,
+    delete_encounter: pick_list::State<String>,
     load_encounter: pick_list::State<String>,
-    save_pcs: button::State,
-    save_pcs_options: Option<(TextInputState, button::State)>,
-    load_pcs: pick_list::State<String>,
-    load_pcs_options: Option<(String, button::State, scrollable::State, Vec<(Pc, TextInputState)>)>,
+    save_party: button::State,
+    delete_party: pick_list::State<String>,
+    load_party: pick_list::State<String>,
+    save_mode: SaveMode,
 }
 
 #[derive(Debug, Clone)]
@@ -164,10 +338,13 @@ pub enum Message {
     NextTurn,
     PrevTurn,
     SaveEncounter,
+    EncounterName(String),
+    DeleteEncounter(String),
     LoadEncounter(String),
-    SavePcs,
+    SaveParty,
     PartyName(String),
-    LoadPcs(String),
+    DeleteParty(String),
+    LoadParty(String),
     PcInitiative(usize, String),
 }
 
@@ -198,11 +375,12 @@ impl Application for InitiativeManager {
             next_turn: Default::default(),
             prev_turn: Default::default(),
             save_encounter: Default::default(),
+            delete_encounter: Default::default(),
             load_encounter: Default::default(),
-            save_pcs: Default::default(),
-            save_pcs_options: None,
-            load_pcs: Default::default(),
-            load_pcs_options: None,
+            save_party: Default::default(),
+            delete_party: Default::default(),
+            load_party: Default::default(),
+            save_mode: Default::default(),
         };
         let command = async {
             // wait briefly to so that loading doesn't take so long
@@ -323,24 +501,32 @@ impl Application for InitiativeManager {
             }
             Message::HotKey(hotkey) => match hotkey {
                 hotkey::Message::NextField(forwards) => {
-                    let states = [
+                    // todo add other set of states for player inits
+                    let cycle = |states: &mut [&mut text_input::State]| {
+                        if let Some(i) = states.into_iter().position(|state| state.is_focused()) {
+                            if forwards {
+                                states[i].unfocus();
+                                states[(i + 1) % states.len()].focus();
+                            } else if !forwards {
+                                states[i].unfocus();
+                                states[if i == 0 { states.len() - 1 } else { i - 1 }].focus();
+                            }
+                        }
+                    };
+                    cycle(&mut [
                         &mut self.new_entity.name.state,
                         &mut self.new_entity.init.state,
                         &mut self.new_entity.hp.state,
                         &mut self.new_entity.leg_acts.state,
-                    ];
-                    for i in 0..states.len() {
-                        if states[i].is_focused() {
-                            if forwards {
-                                states[i].unfocus();
-                                states[(i + 1) % states.len()].focus();
-                                break;
-                            } else if !forwards {
-                                states[i].unfocus();
-                                states[if i == 0 { states.len() - 1 } else { i - 1 }].focus();
-                                break;
-                            }
+                    ]);
+                    match &mut self.save_mode {
+                        SaveMode::LoadParty(_, _, _, rows) => {
+                            let mut vec = rows.into_iter()
+                                .map(|(_, text_input)| &mut text_input.state)
+                                .collect_vec();
+                            cycle(&mut vec);
                         }
+                        _ => {}
                     }
                 }
             }
@@ -358,62 +544,142 @@ impl Application for InitiativeManager {
             } else {
                 self.turn.saturating_sub(1)
             },
-            Message::SaveEncounter => {}
-            Message::LoadEncounter(name) => {}
-            Message::SavePcs => {
+            Message::SaveEncounter => {
+                match &mut self.save_mode {
+                    SaveMode::SaveEncounter(name, _) => {
+                        let enemies = self.entities.iter()
+                            .map(|Entity { name, hp, initiative, legendary_actions, hidden_toggle, .. }| Enemy {
+                                name: name.clone(),
+                                hp: *hp,
+                                legendary_actions: legendary_actions.map(|las| las.0),
+                                initiative: *initiative,
+                                hidden: hidden_toggle.value,
+                            }).collect_vec();
+                        let file = OpenOptions::new()
+                            .create(true)
+                            .write(true)
+                            .open(ENCOUNTER_DIR.join(format!("{}.json", name.content)))
+                            .unwrap();
+                        serde_json::to_writer(file, &enemies).unwrap();
+
+                        self.save_mode = SaveMode::None;
+                    }
+                    other => *other = SaveMode::SaveEncounter(Default::default(), Default::default()),
+                }
+            }
+            Message::EncounterName(name) => match &mut self.save_mode {
+                SaveMode::SaveEncounter(state, _)
+                | SaveMode::DeleteEncounter(_, state, _) => {
+                    state.content = name;
+                }
+                _ => {}
+            }
+            Message::DeleteEncounter(name) => {
+                match &mut self.save_mode {
+                    SaveMode::DeleteEncounter(curr_name, _, _) if name == *curr_name => {
+                        // ignore error
+                        let _ = fs::remove_file(ENCOUNTER_DIR.join(format!("{name}.json")));
+
+                        self.save_mode = SaveMode::None;
+                    }
+                    other => *other = SaveMode::DeleteEncounter(name, Default::default(), Default::default())
+                }
+            }
+            Message::LoadEncounter(name) => {
+                // rows to enter initiative for each character
+                match &mut self.save_mode {
+                    SaveMode::LoadEncounter(curr_name, _, _, rows) if name == *curr_name => {
+                        rows.drain(0..)
+                            .map(|Enemy { name, hp, legendary_actions: legendary_reactions, initiative, hidden }| {
+                                Entity::new(name, hp, initiative, hidden)
+                                    .tap_if_some(legendary_reactions, |mut e, lrs| {
+                                        e.legendary_actions = Some((lrs, lrs));
+                                        e
+                                    })
+                            }).for_each(|e| Self::insert_entity(&mut self.entities, &mut self.turn, e));
+
+                        self.save_mode = SaveMode::None;
+                    }
+                    other => {
+                        let file = OpenOptions::new()
+                            .read(true)
+                            .open(ENCOUNTER_DIR.join(format!("{name}.json")))
+                            .unwrap();
+                        let rows = serde_json::from_reader::<_, Vec<Enemy>>(file)
+                            .unwrap()
+                            .into_iter()
+                            .collect();
+                        *other = SaveMode::LoadEncounter(name, Default::default(), Default::default(), rows)
+                    }
+                }
+            }
+            Message::SaveParty => {
                 // create name field, once submitted save names and HP of all entities
-                match &mut self.save_pcs_options {
-                    Some((name, _)) => {
+                match &mut self.save_mode {
+                    SaveMode::SaveParty(name, _) => {
                         let pcs = self.entities.iter()
                             .map(|Entity { name, hp, .. }| Pc { name: name.clone(), hp: *hp })
                             .collect_vec();
                         let file = OpenOptions::new()
                             .create(true)
                             .write(true)
-                            .open(PCS_DIR.join(format!("{}.json", name.content)))
+                            .open(PARTY_DIR.join(format!("{}.json", name.content)))
                             .unwrap();
                         serde_json::to_writer(file, &pcs).unwrap();
 
-                        self.save_pcs_options = None;
+                        self.save_mode = SaveMode::None;
                     }
-                    none => *none = Some(Default::default()),
+                    other => *other = SaveMode::SaveParty(Default::default(), Default::default()),
                 };
             }
-            Message::PartyName(name) => {
-                if let Some((state, _)) = &mut self.save_pcs_options {
+            Message::PartyName(name) => match &mut self.save_mode {
+                SaveMode::SaveParty(state, _)
+                | SaveMode::DeleteParty(_, state, _) => {
                     state.content = name;
                 }
+                _ => {}
+            },
+            Message::DeleteParty(name) => {
+                match &mut self.save_mode {
+                    SaveMode::DeleteParty(curr_name, _, _) if name == *curr_name => {
+                        // ignore error
+                        let _ = fs::remove_file(PARTY_DIR.join(format!("{name}.json")));
+
+                        self.save_mode = SaveMode::None;
+                    }
+                    other => *other = SaveMode::DeleteParty(name, Default::default(), Default::default())
+                }
             }
-            Message::LoadPcs(name) => {
+            Message::LoadParty(name) => {
                 // rows to enter initiative for each character
-                match &mut self.load_pcs_options {
-                    Some((p_name, _, _, rows)) if name == *p_name => {
+                match &mut self.save_mode {
+                    SaveMode::LoadParty(curr_name, _, _, rows) if name == *curr_name => {
                         rows.drain(0..)
                             .map(|(Pc { name, hp }, txt)| {
                                 Entity::new(name, hp, txt.content.parse().unwrap(), false)
                             }).for_each(|e| Self::insert_entity(&mut self.entities, &mut self.turn, e));
 
-                        self.load_pcs_options = None;
+                        self.save_mode = SaveMode::None;
                     }
-                    none => *none = {
+                    other => {
                         let file = OpenOptions::new()
                             .read(true)
-                            .open(PCS_DIR.join(format!("{name}.json")))
+                            .open(PARTY_DIR.join(format!("{name}.json")))
                             .unwrap();
                         let rows = serde_json::from_reader::<_, Vec<Pc>>(file)
                             .unwrap()
                             .into_iter()
                             .map(|pc| (pc, Default::default()))
                             .collect();
-                        Some((name, Default::default(), Default::default(), rows))
-                    },
+                        *other = SaveMode::LoadParty(name, Default::default(), Default::default(), rows)
+                    }
                 }
             }
-            Message::PcInitiative(idx, init) => if let Some((_, _, _, rows)) = &mut self.load_pcs_options {
+            Message::PcInitiative(idx, init) => if let SaveMode::LoadParty(_, _, _, rows) = &mut self.save_mode {
                 if init.is_empty() || init.parse::<u32>().is_ok() {
                     rows[idx].1.content = init;
                 }
-            }
+            },
         };
         Command::none()
     }
@@ -451,7 +717,7 @@ impl Application for InitiativeManager {
     fn view(&mut self) -> Element<'_, Self::Message> {
         const INITIATIVES_PADDING: u16 = 8;
         const INITIATIVES_BORDER_PADDING: u16 = 4;
-        const INITIATIVES_INTERIOR_PADDING: u16 = 6;
+        const INITIATIVES_INTERIOR_PADDING: u16 = 4;
         const CONTROL_SPACING: u16 = 5;
         const HP_MOD_WIDTH: u16 = 26;
         const COLUMN_WIDTH_RATIO: (u16, u16) = (3, 2);
@@ -459,12 +725,7 @@ impl Application for InitiativeManager {
         let visible = self.visible.value;
         let style = self.style;
         let width = self.width;
-        let init_width = ((width as u16 * COLUMN_WIDTH_RATIO.0) as f64 / (COLUMN_WIDTH_RATIO.0 + COLUMN_WIDTH_RATIO.1) as f64)
-            - 2.0 * INITIATIVES_PADDING as f64
-            - 2.0 * INITIATIVES_BORDER_PADDING as f64
-            - 2.0 * INITIATIVES_INTERIOR_PADDING as f64
-            - 2.0 * CONTROL_SPACING as f64
-            - HP_MOD_WIDTH as f64;
+        let init_width = (width as u16 * COLUMN_WIDTH_RATIO.0) as f64 / (COLUMN_WIDTH_RATIO.0 + COLUMN_WIDTH_RATIO.1) as f64;
 
         let has_legendary_action = self.entities.iter()
             .any(|e| e.legendary_actions.is_some());
@@ -714,7 +975,8 @@ impl Application for InitiativeManager {
                 .padding(INITIATIVES_BORDER_PADDING)
                 .style(style.initiative_table_border())
                 .center_x()
-        ).padding(INITIATIVES_PADDING);
+        ).padding(INITIATIVES_PADDING)
+            .center_x();
 
         let next = Button::new(
             &mut self.next_turn,
@@ -783,37 +1045,64 @@ impl Application for InitiativeManager {
 
         let save_encounter = Button::new(
             &mut self.save_encounter,
-            Text::new("Save Encounter"),
+            Text::new("Save Encounter").size(16),
         ).style(style)
             .on_press(Message::SaveEncounter);
 
+        let start = Instant::now();
+        let encounters = fs::read_dir(&*ENCOUNTER_DIR).unwrap()
+            .flatten()
+            .filter(|entry| entry.file_type().ok().filter(FileType::is_file).is_some())
+            .map(|entry| entry.path().file_stem().unwrap().to_string_lossy().into_owned())
+            .collect_vec();
+        println!("read encounters = {:?}", start.elapsed());
+
+        let delete_encounter = PickList::new(
+            &mut self.delete_encounter,
+            encounters.clone(),
+            Some(String::from("Delete Encounter")),
+            Message::DeleteEncounter,
+        ).style(style)
+            .text_size(16);
+
         let load_encounter = PickList::new(
             &mut self.load_encounter,
-            &[][..],
+            encounters,
             Some(String::from("Load Encounter")),
             Message::LoadEncounter,
-        ).style(style);
-
-        let save_pcs = Button::new(
-            &mut self.save_pcs,
-            Text::new("Save Players"),
         ).style(style)
-            .on_press(Message::SavePcs);
+            .text_size(16);
 
+        let save_party = Button::new(
+            &mut self.save_party,
+            Text::new("Save Players").size(16),
+        ).style(style)
+            .on_press(Message::SaveParty);
+
+        // todo store the saved ones and then have it watch the directory for updates
         let start = Instant::now();
-        let parties = std::fs::read_dir(&*PCS_DIR).unwrap()
+        let parties = fs::read_dir(&*PARTY_DIR).unwrap()
             .flatten()
             .filter(|entry| entry.file_type().ok().filter(FileType::is_file).is_some())
             .map(|entry| entry.path().file_stem().unwrap().to_string_lossy().into_owned())
             .collect_vec();
         println!("read parties = {:?}", start.elapsed());
 
-        let load_pcs = PickList::new(
-            &mut self.load_pcs,
+        let delete_party = PickList::new(
+            &mut self.delete_party,
+            parties.clone(),
+            Some(String::from("Delete Players")),
+            Message::DeleteParty,
+        ).style(style)
+            .text_size(16);
+
+        let load_party = PickList::new(
+            &mut self.load_party,
             parties,
             Some(String::from("Load Players")),
-            Message::LoadPcs,
-        ).style(style);
+            Message::LoadParty,
+        ).style(style)
+            .text_size(16);
 
         let new_entity_col = Container::new(
             Column::new()
@@ -836,62 +1125,26 @@ impl Application for InitiativeManager {
                 .push_space(100)
                 .push_rule(20)
                 .push(Row::new()
-                    .push(save_encounter)
+                    .push(Column::new()
+                        .push(save_encounter)
+                        .push_space(10)
+                        .push(save_party))
                     .push_space(Length::Fill)
-                    .push(load_encounter)
-                )
-                .push_space(10)
-                .push(Row::new()
-                    .push(save_pcs)
+                    .push(Column::new()
+                        .push(delete_encounter)
+                        .push_space(10)
+                        .push(delete_party))
                     .push_space(Length::Fill)
-                    .push(load_pcs)
+                    .push(Column::new()
+                        .push(load_encounter)
+                        .push_space(10)
+                        .push(load_party))
                 )
-                .tap_if_some(
-                    self.save_pcs_options.as_mut(),
-                    |col, (text, button)| {
-                        let party_name = text.text_input("Party Name", Message::PartyName)
-                            .style(style)
-                            .on_submit(Message::SavePcs);
-                        let submit = Button::new(button, Text::new("Submit"))
-                            .style(style)
-                            .on_press(Message::SavePcs);
-                        col
-                            .push_space(10)
-                            .push(Row::new()
-                                .align_items(Align::Center)
-                                .push(party_name)
-                                .push_space(8)
-                                .push(submit)
-                            )
-                    })
-                .tap_if_some(
-                    self.load_pcs_options.as_mut(),
-                    |col, (party_name, button, scroll, rows)| {
-                        let all_entered = rows.iter().all(|(_, txt)| !txt.content.is_empty());
-                        let button = Button::new(button, Text::new("Submit Initiatives"))
-                            .style(style)
-                            .tap_if(all_entered, |b| b.on_press(Message::LoadPcs(party_name.clone())));
-
-                        let scrollable = rows.iter_mut()
-                            .enumerate()
-                            .fold(Scrollable::new(scroll).spacing(5), |scroll, (i, (pc, text))| {
-                                scroll.push(Row::new()
-                                    .align_items(Align::Center)
-                                    .push(Text::new(&pc.name))
-                                    .push_space(12)
-                                    .push(text.text_input("Initiative", move |str| Message::PcInitiative(i, str))
-                                        .style(style)
-                                        .tap_if(all_entered, |txt| txt.on_submit(Message::LoadPcs(party_name.clone())))
-                                    ))
-                            });
-
-                        col.push_space(10)
-                            .push(Container::new(button).align_x(Align::Center).style(style))
-                            .push_space(10)
-                            .push(scrollable)
-                    },
+                .tap_if(
+                    !matches!(self.save_mode, SaveMode::None),
+                    |col| col.push_space(10).push(self.save_mode.view(style)),
                 )
-        ).padding(20)
+        ).padding(8)
             .center_x();
 
         let toggle_visibility = self.visible.button_with(|text| text.size(12))

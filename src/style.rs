@@ -513,7 +513,7 @@ mod dark {
         fn menu(&self) -> pick_list::Menu {
             pick_list::Menu {
                 text_color: Color::WHITE,
-                background: Background::Color(color::SURFACE),
+                background: color::SURFACE.into(),
                 border_width: 1.0,
                 border_color: [0.3, 0.3, 0.3].into(),
                 selected_text_color: Color::WHITE,
@@ -524,7 +524,7 @@ mod dark {
         fn active(&self) -> pick_list::Style {
             pick_list::Style {
                 text_color: Color::WHITE,
-                background: Background::Color(color::SURFACE),
+                background: color::ACTIVE.into(),
                 border_radius: 3.0,
                 border_width: 0.0,
                 border_color: Color::TRANSPARENT,
