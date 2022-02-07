@@ -546,7 +546,7 @@ impl Application for InitiativeManager {
             },
             Message::SaveEncounter => {
                 match &mut self.save_mode {
-                    SaveMode::SaveEncounter(name, _) => {
+                    SaveMode::SaveEncounter(name, _) if !name.content.is_empty() => {
                         let enemies = self.entities.iter()
                             .map(|Entity { name, hp, initiative, legendary_actions, hidden_toggle, .. }| Enemy {
                                 name: name.clone(),
@@ -616,7 +616,7 @@ impl Application for InitiativeManager {
             Message::SaveParty => {
                 // create name field, once submitted save names and HP of all entities
                 match &mut self.save_mode {
-                    SaveMode::SaveParty(name, _) => {
+                    SaveMode::SaveParty(name, _) if !name.content.is_empty() => {
                         let pcs = self.entities.iter()
                             .map(|Entity { name, hp, .. }| Pc { name: name.clone(), hp: *hp })
                             .collect_vec();
@@ -1124,22 +1124,22 @@ impl Application for InitiativeManager {
                 )
                 .push_space(100)
                 .push_rule(20)
-                .push(Row::new()
+                .push(Container::new(Row::new()
                     .push(Column::new()
                         .push(save_encounter)
                         .push_space(10)
                         .push(save_party))
-                    .push_space(Length::Fill)
+                    .push_space(12)
                     .push(Column::new()
                         .push(delete_encounter)
                         .push_space(10)
                         .push(delete_party))
-                    .push_space(Length::Fill)
+                    .push_space(12)
                     .push(Column::new()
                         .push(load_encounter)
                         .push_space(10)
                         .push(load_party))
-                )
+                ).width(Length::Shrink))
                 .tap_if(
                     !matches!(self.save_mode, SaveMode::None),
                     |col| col.push_space(10).push(self.save_mode.view(style)),

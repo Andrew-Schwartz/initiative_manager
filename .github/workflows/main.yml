@@ -67,8 +67,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: v1.2.0
-          release_name: v1.2.0 Save parties and encounters
+          tag_name: v1.2.1
+          release_name: v1.2.1 Fix saving empty names
           draft: true
           prerelease: false
       - name: Get Names
