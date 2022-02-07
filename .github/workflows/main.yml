@@ -67,8 +67,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: v1.1.0
-          release_name: v1.1.0 Programs for windows, linux, and mac
+          tag_name: v1.2.0
+          release_name: v1.2.0 Save parties and encounters
           draft: true
           prerelease: false
       - name: Get Names
