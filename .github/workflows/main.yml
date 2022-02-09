@@ -34,19 +34,14 @@ jobs:
           mkdir $dir
           echo "$(cargo r --release -- TARGET)" > $dir/TARGET
           mv target/release/initiative_manager.exe $dir/initiative_manager.exe
+          Invoke-WebRequest -Uri "https://github.com/electron/rcedit/releases/download/v1.1.1/rcedit-x64.exe" -OutFile "rcedit-x64.exe"
+          ./rcedit-x64.exe $dir/initiative_manager.exe --set-icon resources/logo.ico
         if: matrix.os == 'windows-latest'
       - uses: actions/upload-artifact@v2.3.1
         with:
           name: artifact-${{ matrix.os }}
           path: artifact-${{ matrix.os }}
           if-no-files-found: error
-        if: matrix.os != 'windows-latest'
-      - uses: actions/upload-artifact@v2.3.1
-        with:
-          name: artifact-${{ matrix.os }}
-          path: artifact-${{ matrix.os }}
-          if-no-files-found: error
-        if: matrix.os == 'windows-latest'
 
   release:
     needs: [ build ]
@@ -67,8 +62,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: v1.2.1
-          release_name: v1.2.1 Fix saving empty names
+          tag_name: v1.2.2
+          release_name: v1.2.2 Windows icon for executable
           draft: true
           prerelease: false
       - name: Get Names
