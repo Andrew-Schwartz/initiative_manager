@@ -176,7 +176,7 @@ impl SaveMode {
                     submit,
                     Text::new("Confirm"),
                 ).style(style)
-                    .on_press(Message::LoadParty(name.clone()));
+                    .on_press(Message::LoadEncounter(name.clone()));
 
                 let [names, hps, las, inits] = enemies.into_iter()
                     .fold(["Name (Hidden)", "HP", "Leg. Acts.", "Initiative"].map(|title| vec![Element::from(Text::new(title))]),
@@ -298,6 +298,7 @@ pub struct InitiativeManager {
     style_button: button::State,
     entities: Vec<Entity>,
     scroll: scrollable::State,
+    new_entity_submit: button::State,
     new_entity: NewEntity,
     turn: usize,
     next_turn: button::State,
@@ -362,14 +363,9 @@ impl Application for InitiativeManager {
             width,
             height,
             style_button: Default::default(),
-            entities: vec![
-                Entity::new("TEST 1".to_string(), 15, 13, true),
-                Entity::new("TEST 2".to_string(), 16, 9, true),
-                Entity::new("TEST 3".to_string(), 17, 5, true),
-                Entity::new("TEST 4".to_string(), 19, 2, true),
-                Entity::new("TEST 5".to_string(), 18, 1, true),
-            ],
+            entities: vec![],
             scroll: Default::default(),
+            new_entity_submit: Default::default(),
             new_entity: Default::default(),
             turn: 0,
             next_turn: Default::default(),
@@ -1008,6 +1004,13 @@ impl Application for InitiativeManager {
             hp_ready && name_ready
         };
 
+        let submit_new_button = Button::new(
+            &mut self.new_entity_submit,
+            Text::new("Submit"),
+        ).style(style)
+            .tap_if(new_ready,
+                    |btn| btn.on_press(Message::NewEntitySubmit));
+
         let new_name = self.new_entity.name.text_input(
             "Name",
             Message::NewName,
@@ -1109,10 +1112,15 @@ impl Application for InitiativeManager {
                 .push(next_btns)
                 .push_space(10)
                 .push_rule(20)
-                .push(Row::new()
-                    .push(new_name.width(Length::FillPortion(2)))
-                    .push_space(6)
-                    .push(new_init.width(Length::FillPortion(1)))
+                .push(Column::new()
+                    .align_items(Align::Center)
+                    .push(submit_new_button)
+                    .push_space(15)
+                    .push(Row::new()
+                        .push(new_name.width(Length::FillPortion(2)))
+                        .push_space(6)
+                        .push(new_init.width(Length::FillPortion(1)))
+                    )
                 )
                 .push_space(5)
                 .push(Row::new()
