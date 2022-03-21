@@ -1,12 +1,16 @@
 use std::fmt::Display;
 use std::str::FromStr;
 
-use iced::{button, Button, Color, Column, Element, HorizontalAlignment, Length, Row, Rule, Scrollable, Space, Text, text_input, TextInput, Tooltip};
+use iced::{button, Button, Checkbox, Color, Column, Element, HorizontalAlignment, Length, Row, Rule, Scrollable, Space, Text, text_input, TextInput, Tooltip};
 use iced_aw::Icon;
 use iced_native::tooltip::Position;
 use itertools::Itertools;
+use once_cell::sync::Lazy;
 use rand::{Rng, thread_rng};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
+
+use crate::Message;
 
 pub trait SpacingExt {
     fn push_space<L: Into<Length>>(self, length: L) -> Self;
@@ -148,6 +152,27 @@ pub trait IterExt: Iterator + Sized {
 
 impl<I: Iterator + Sized> IterExt for I {}
 
+#[derive(Default, Debug, Copy, Clone, Deserialize, Serialize)]
+pub struct Hidden<T>(pub T, pub bool);
+
+impl<T> From<T> for Hidden<T> {
+    fn from(t: T) -> Self {
+        Hidden(t, false)
+    }
+}
+
+pub trait MakeHidden: Sized {
+    fn hidden(self, hidden: bool) -> Hidden<Self> {
+        Hidden(self, hidden)
+    }
+}
+
+impl<T: Sized> MakeHidden for T {}
+
+pub fn checkbox<F: 'static + Fn(bool) -> Message>(is_checked: bool, f: F) -> Checkbox<Message> {
+    Checkbox::new(is_checked, String::new(), f).spacing(0)
+}
+
 #[derive(Default, Debug)]
 pub struct TextInputState {
     pub state: text_input::State,
@@ -155,6 +180,13 @@ pub struct TextInputState {
 }
 
 impl TextInputState {
+    pub fn focused() -> Self {
+        Self {
+            state: text_input::State::focused(),
+            content: String::default(),
+        }
+    }
+
     pub fn text_input<M, F>(&mut self, placeholder: &str, on_change: F) -> TextInput<M>
         where M: Clone,
               F: 'static + Fn(String) -> M
@@ -177,20 +209,22 @@ pub struct ToggleButtonState {
 
 impl Default for ToggleButtonState {
     fn default() -> Self {
-        Self {
-            state: Default::default(),
-            value: true,
-            states: [Icon::X, Icon::Check],
-        }
+        Self::new(false)
     }
 }
 
 impl ToggleButtonState {
-    pub fn new(is_enabled: bool, disabled: Icon, enabled: Icon) -> Self {
+    pub const DEFAULT_STATES: [Icon; 2] = [Icon::X, Icon::Check];
+
+    pub fn new(is_enabled: bool) -> Self {
+        Self::new_with(is_enabled, Self::DEFAULT_STATES)
+    }
+
+    pub fn new_with(is_enabled: bool, disabled_enabled: [Icon; 2]) -> Self {
         Self {
             state: Default::default(),
             value: is_enabled,
-            states: [disabled, enabled],
+            states: disabled_enabled,
         }
     }
 
@@ -204,7 +238,12 @@ impl ToggleButtonState {
         )
     }
 
-    pub fn button_with<M: Clone, F: FnOnce(Text) -> Text>(&mut self, text_config: F) -> Button<M> {
+    pub fn button_with<'a, M, E, F>(&'a mut self, text_config: F) -> Button<'a, M>
+        where
+            M: Clone,
+            E: Into<Element<'a, M>>,
+            F: FnOnce(Text) -> E
+    {
         let label = self.states[usize::from(self.value)];
         Button::new(
             &mut self.state,
@@ -241,30 +280,68 @@ pub fn censor_name(name: &str) -> String {
         .join(" ")
 }
 
-#[derive(Debug)]
-pub enum Hp {
+#[derive(Debug, Copy, Clone)]
+pub enum HpPart {
     Number(u32),
+    // NumberInProgress,
     Roll {
         n: u32,
         d: u32,
-        plus: u32,
     },
     RollInProgress {
         n: u32,
-        d: Option<u32>,
     },
 }
 
-impl Hp {
-    pub fn into_number(self) -> u32 {
+impl HpPart {
+    pub fn into_number<R: Rng>(self, rng: &mut R) -> Option<u32> {
         match self {
-            Self::Number(hp) => hp,
-            Self::Roll { n, d, plus } => {
-                let mut rng = thread_rng();
-                (0..n).map(|_| rng.gen_range(1..=d)).sum::<u32>() + plus
-            }
-            Self::RollInProgress { .. } => unreachable!(),
+            Self::Number(hp) => Some(hp),
+            Self::Roll { n, d } => Some((0..n).map(|_| rng.gen_range(1..=d)).sum()),
+            Self::RollInProgress { .. } => None,
         }
+    }
+}
+
+impl FromStr for HpPart {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() { return Ok(Self::Number(0)); }
+        let mut d_split = s.split("d");
+        let n = d_split.next()
+            .ok_or(())?
+            .parse()
+            .map_err(|_| ())?;
+        let d = d_split.next();
+        if d_split.count() != 0 {
+            return Err(());
+        }
+        match d {
+            None => Ok(Self::Number(n)),
+            Some("") => Ok(Self::RollInProgress { n }),
+            Some(d) => {
+                let d = d.parse()
+                    .map_err(|_| ())?;
+                Ok(Self::Roll { n, d })
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Hp(Vec<HpPart>);
+
+impl Hp {
+    pub fn new(hp: u32) -> Self {
+        Self(vec![HpPart::Number(hp)])
+    }
+
+    pub fn into_number(self) -> Option<u32> {
+        let mut rng = rand::thread_rng();
+        self.0.into_iter()
+            .map(|hp| hp.into_number(&mut rng))
+            .fold_options(0, |a, b| a + b)
     }
 }
 
@@ -272,49 +349,10 @@ impl FromStr for Hp {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        fn next_non_empty<'a, I: Iterator<Item=&'a str>>(iter: &mut I) -> Option<&'a str> {
-            match iter.next() {
-                Some("") => next_non_empty(iter),
-                Some(non_empty) => Some(non_empty),
-                None => None,
-            }
-        }
-
-        let result = s.parse().map(Self::Number)
-            .map_err(|_| Err::<Self, _>(()))
-            .or_else(|_| {
-                // "20d" "20d10"  "20d10+100"  "20d10 + 100"  "20d+"
-                let mut d_split = s.split('d');
-                // "(20)d()"  "(20)d(10)"  "(20)d(10+100)"  "(20)d(10 + 100)"  "(20)d(+)"
-                let n = d_split.next()
-                    .ok_or(Err(()))?
-                    .parse()
-                    .map_err(|_| Err(()))?;
-                println!("n = {:?}", n);
-                // ""  "10"  "10+100"  "10 + 100"  "+"
-                let mut plus_split = d_split.next()
-                    .ok_or(Ok(Self::RollInProgress { n, d: None }))?
-                    .split([' ', '+']);
-                // "()"  "(10)"  "(10)+(100)"  "(10) ()+() (100)"  "()"
-                let d = next_non_empty(&mut plus_split)
-                    .ok_or(Ok(Self::RollInProgress { n, d: None }))?
-                    .parse()
-                    .map_err(|_| Err(()))?;
-                // ""  "100" "()+() (100)"
-                let plus = next_non_empty(&mut plus_split)
-                    .ok_or(Ok(Self::Roll { n, d, plus: 0 }))?
-                    .parse()
-                    .map_err(|_| Err(()))?;
-
-                match plus_split.next() {
-                    None => Ok(Self::Roll { n, d, plus }),
-                    Some(_) => Err(Err(())),
-                }
-            });
-        match result {
-            Ok(hp) => Ok(hp),
-            Err(Ok(roll_in_progress)) => Ok(roll_in_progress),
-            Err(Err(())) => Err(())
-        }
+        static PLUS_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r#"\s*\+\s*"#).unwrap());
+        let vec = PLUS_REGEX.split(s)
+            .map(HpPart::from_str)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self(vec))
     }
 }

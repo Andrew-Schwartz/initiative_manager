@@ -62,8 +62,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: v1.2.3
-          release_name: v1.2.3 Small bugfixes
+          tag_name: v1.2.4
+          release_name: v1.2.4 Added concentration display & more discrete hideable stats (WIP)
           draft: true
           prerelease: false
       - name: Get Names

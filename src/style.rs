@@ -181,6 +181,16 @@ impl From<InitiativeTableStyle> for Box<dyn text_input::StyleSheet> {
     }
 }
 
+impl From<InitiativeTableStyle> for Box<dyn checkbox::StyleSheet> {
+    fn from(InitiativeTableStyle { style, alt }: InitiativeTableStyle) -> Self {
+        match style {
+            Style::Light => Default::default(),
+            Style::Dark => dark::InitiativeTable(alt).into(),
+        }
+    }
+}
+
+// todo make a better way of doing colors
 mod light {
     use iced::{button, Color};
 
@@ -283,13 +293,12 @@ mod dark {
                 }
             }
 
-            // pub fn hovered(alternate: Option<bool>) -> Color {
-            //     match alternate {
-            //         None => color!(rgb 0xD1 0xD1 0x71),
-            //         Some(true) => color!(rgb 0x30 0x33 0x35),
-            //         Some(false) => color!(rgba 0 0 0 0),
-            //     }
-            // }
+            pub fn hovered(alternate: Option<bool>) -> Color {
+                match alternate {
+                    Some(true) => color!(rgb 0x35 0x38 0x3A),
+                    None | Some(false) => color!(rgb 0x32 0x35 0x37),
+                }
+            }
         }
     }
 
@@ -358,6 +367,26 @@ mod dark {
             text_input::Style {
                 border_color: Color::TRANSPARENT,
                 ..TextInput.hovered()
+            }
+        }
+    }
+
+    impl checkbox::StyleSheet for InitiativeTable {
+        fn active(&self, _: bool) -> checkbox::Style {
+            checkbox::Style {
+                background: Color::TRANSPARENT.into(),
+                checkmark_color: Color::WHITE,
+                border_radius: 10.0,
+                border_width: 0.0,
+                border_color: Color::TRANSPARENT,
+            }
+        }
+
+        fn hovered(&self, is_checked: bool) -> checkbox::Style {
+            checkbox::Style {
+                checkmark_color: Color::WHITE.a(0.7),
+                background: color::alternating::hovered(self.0).into(),
+                ..self.active(is_checked)
             }
         }
     }
@@ -543,26 +572,19 @@ mod dark {
     pub struct Checkbox;
 
     impl checkbox::StyleSheet for Checkbox {
-        fn active(&self, is_checked: bool) -> checkbox::Style {
+        fn active(&self, _: bool) -> checkbox::Style {
             checkbox::Style {
-                background: Background::Color(if is_checked {
-                    color::ACTIVE
-                } else {
-                    color::SURFACE
-                }),
-                checkmark_color: Color::WHITE,
-                border_radius: 2.0,
+                background: Color::TRANSPARENT.into(),
+                checkmark_color: Color::WHITE.a(0.9),
+                border_radius: 3.0,
                 border_width: 1.0,
-                border_color: color::ACTIVE,
+                border_color: Color::TRANSPARENT,
             }
         }
 
         fn hovered(&self, is_checked: bool) -> checkbox::Style {
             checkbox::Style {
-                background: Background::Color(Color {
-                    a: 0.8,
-                    ..if is_checked { color::ACTIVE } else { color::SURFACE }
-                }),
+                checkmark_color: Color::WHITE.a(0.6),
                 ..self.active(is_checked)
             }
         }

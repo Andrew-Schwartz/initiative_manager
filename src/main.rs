@@ -19,6 +19,7 @@ clippy::cast_possible_wrap,
 #![feature(array_windows)]
 #![feature(array_chunks)]
 
+use std::fmt::Display;
 use std::fs;
 use std::fs::{FileType, OpenOptions};
 use std::path::PathBuf;
@@ -34,10 +35,8 @@ use rand::Rng;
 use self_update::cargo_crate_version;
 use serde::{Deserialize, Serialize};
 
-use utils::Hp;
-
 use crate::style::{SettingsBarStyle, Style};
-use crate::utils::{censor_name, SpacingExt, Tap, TextInputState, ToggleButtonState, TooltipExt};
+use crate::utils::{censor_name, checkbox, Hidden, Hp, MakeHidden, SpacingExt, Tap, TextInputState, ToggleButtonState, TooltipExt};
 
 #[macro_use]
 mod utils;
@@ -66,32 +65,32 @@ static ENCOUNTER_DIR: Lazy<PathBuf> = Lazy::new(|| {
 
 #[derive(Debug)]
 struct Entity {
-    hidden_toggle: ToggleButtonState,
-    name: String,
+    name: Hidden<String>,
     remove_state: button::State,
-    hp: u32,
+    hp: Hidden<u32>,
     damage: TextInputState,
     heal: TextInputState,
     reaction_free: ToggleButtonState,
-    legendary_actions: Option<(u32, u32)>,
+    concentrating: ToggleButtonState,
+    legendary_actions: Option<Hidden<(u32, u32)>>,
     la_minus: button::State,
     la_plus: button::State,
-    initiative: u32,
+    initiative: Hidden<u32>,
     init_up: button::State,
     init_down: button::State,
 }
 
 impl Entity {
-    fn new(name: String, hp: u32, initiative: u32, hidden: bool) -> Self {
+    fn new(name: Hidden<String>, hp: Hidden<u32>, initiative: Hidden<u32>) -> Self {
         Self {
-            hidden_toggle: ToggleButtonState::new(hidden, Icon::EyeSlashFill, Icon::EyeFill),
             name,
             remove_state: Default::default(),
             hp,
             damage: Default::default(),
             heal: Default::default(),
-            reaction_free: Default::default(),
-            legendary_actions: None,
+            reaction_free: ToggleButtonState::new(true),
+            concentrating: ToggleButtonState::new(false),
+            legendary_actions: Default::default(),
             la_minus: Default::default(),
             la_plus: Default::default(),
             initiative,
@@ -103,11 +102,10 @@ impl Entity {
 
 #[derive(Default)]
 struct NewEntity {
-    name: TextInputState,
-    init: TextInputState,
-    hp: TextInputState,
-    leg_acts: TextInputState,
-    hidden: bool,
+    name: Hidden<TextInputState>,
+    init: Hidden<TextInputState>,
+    hp: Hidden<TextInputState>,
+    leg_acts: Hidden<TextInputState>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -118,11 +116,10 @@ struct Pc {
 
 #[derive(Deserialize, Serialize)]
 struct Enemy {
-    name: String,
-    hp: u32,
-    legendary_actions: Option<u32>,
-    initiative: u32,
-    hidden: bool,
+    name: Hidden<String>,
+    hp: Hidden<u32>,
+    legendary_actions: Option<Hidden<u32>>,
+    initiative: Hidden<u32>,
 }
 
 enum SaveMode {
@@ -179,21 +176,37 @@ impl SaveMode {
                     .on_press(Message::LoadEncounter(name.clone()));
 
                 let [names, hps, las, inits] = enemies.into_iter()
-                    .fold(["Name (Hidden)", "HP", "Leg. Acts.", "Initiative"].map(|title| vec![Element::from(Text::new(title))]),
-                          |[mut names, mut hps, mut las, mut inits], Enemy { name, hp, legendary_actions, initiative, hidden }| {
-                              let name = Text::new(format!("{name} ({})", if *hidden { '✔' } else { '❌' })).size(16);
-                              names.push(name.into());
-
-                              let hp = Text::new(hp.to_string()).size(16);
-                              hps.push(hp.into());
-
-                              if let Some(la) = legendary_actions {
-                                  let la = Text::new(roman::to(*la as _).unwrap()).size(16);
-                                  las.push(la.into());
+                    .enumerate()
+                    .fold(["Name (Hidden)", "HP (Hidden)", "Leg. Acts. (Hidden)", "Initiative (Hidden)"].map(|title| vec![Element::from(Text::new(title))]),
+                          |[mut names, mut hps, mut las, mut inits], (idx, Enemy { name, hp, legendary_actions, initiative })| {
+                              fn view<T: Display>(Hidden(t, hidden): &Hidden<T>, idx: usize, part: HideablePart, style: Style) -> Element<'static, Message> {
+                                  let hide = checkbox(*hidden, move |hidden| Message::EncounterHide(idx, hidden, part))
+                                      .style(style)
+                                      .size(16);
+                                  let row = Row::new()
+                                      .push(Text::new(format!("{t} (")).size(16))
+                                      .push(hide)
+                                      .push(Text::new(')').size(16));
+                                  row.into()
                               }
 
-                              let init = Text::new(initiative.to_string()).size(16);
-                              inits.push(init.into());
+                              names.push(view(&name, idx, HideablePart::Name, style));
+                              // let name = Text::new(format!("{name} ({})", if *hidden { '✔' } else { '❌' })).size(16);
+                              // names.push(name.into());
+
+                              hps.push(view(&hp, idx, HideablePart::Hp, style));
+                              // let hp = Text::new(hp.to_string()).size(16);
+                              // hps.push(hp.into());
+
+                              if let Some(la) = legendary_actions {
+                                  las.push(view(&la, idx, HideablePart::LegActs, style));
+                                  // let la = Text::new(roman::to(*la as _).unwrap()).size(16);
+                                  // las.push(la.into());
+                              }
+
+                              inits.push(view(&initiative, idx, HideablePart::Initiative, style));
+                              // let init = Text::new(initiative.to_string()).size(16);
+                              // inits.push(init.into());
 
                               [names, hps, las, inits]
                           });
@@ -291,12 +304,13 @@ impl Default for SaveMode {
 pub struct InitiativeManager {
     update_state: UpdateState,
     update_url: String,
-    visible: ToggleButtonState,
+    dm_view: ToggleButtonState,
     style: Style,
     width: u32,
     height: u32,
     style_button: button::State,
     entities: Vec<Entity>,
+    highlight_state: Option<(usize, container::Style)>,
     scroll: scrollable::State,
     new_entity_submit: button::State,
     new_entity: NewEntity,
@@ -318,13 +332,15 @@ pub enum Message {
     ToggleVisibility,
     ToggleStyle,
     Resize(u32, u32),
-    ToggleHidden(usize),
+    ToggleHidden(usize, HideablePart),
     DeleteEntity(usize),
     EditDamage(usize, String),
     Damage(usize),
+    HighlightConcentration(usize, Instant),
     EditHealing(usize, String),
     Heal(usize),
     Reaction(usize),
+    Concentrate(usize),
     LegActionMinus(usize),
     LegActionPlus(usize),
     MoveUp(usize),
@@ -333,7 +349,7 @@ pub enum Message {
     NewInit(String),
     NewHp(String),
     NewLas(String),
-    NewHidden(bool),
+    NewHidden(bool, HideablePart),
     NewEntitySubmit,
     HotKey(hotkey::Message),
     NextTurn,
@@ -342,11 +358,20 @@ pub enum Message {
     EncounterName(String),
     DeleteEncounter(String),
     LoadEncounter(String),
+    EncounterHide(usize, bool, HideablePart),
     SaveParty,
     PartyName(String),
     DeleteParty(String),
     LoadParty(String),
     PcInitiative(usize, String),
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum HideablePart {
+    Name,
+    Hp,
+    LegActs,
+    Initiative,
 }
 
 impl Application for InitiativeManager {
@@ -358,12 +383,13 @@ impl Application for InitiativeManager {
         let window = Self {
             update_state: UpdateState::Checking,
             update_url: "".to_string(),
-            visible: ToggleButtonState::new(true, Icon::EyeSlashFill, Icon::EyeFill),
+            dm_view: ToggleButtonState::new_with(true, [Icon::EyeSlashFill, Icon::EyeFill]),
             style: Default::default(),
             width,
             height,
             style_button: Default::default(),
             entities: vec![],
+            highlight_state: None,
             scroll: Default::default(),
             new_entity_submit: Default::default(),
             new_entity: Default::default(),
@@ -391,17 +417,26 @@ impl Application for InitiativeManager {
     }
 
     fn update(&mut self, message: Self::Message, _: &mut iced::Clipboard) -> Command<Message> {
+        let mut commands = Vec::new();
         match message {
             Message::Update(msg) => if let Err(e) = update::handle(self, msg) {
                 self.update_state = UpdateState::Errored(e.to_string());
             },
-            Message::ToggleVisibility => self.visible.invert(),
+            Message::ToggleVisibility => self.dm_view.invert(),
             Message::ToggleStyle => self.style = !self.style,
             Message::Resize(width, height) => {
                 self.width = width;
                 self.height = height;
             }
-            Message::ToggleHidden(i) => self.entities[i].hidden_toggle.invert(),
+            Message::ToggleHidden(i, part) => {
+                let entity = &mut self.entities[i];
+                match part {
+                    HideablePart::Name => entity.name.1 = !entity.name.1,
+                    HideablePart::Hp => entity.hp.1 = !entity.hp.1,
+                    HideablePart::LegActs => { entity.legendary_actions.as_mut().map(|las| las.1 = !las.1); }
+                    HideablePart::Initiative => entity.initiative.1 = !entity.initiative.1,
+                }
+            }
             Message::DeleteEntity(i) => {
                 self.entities.remove(i);
                 if i < self.turn {
@@ -417,8 +452,33 @@ impl Application for InitiativeManager {
                 let entity = &mut self.entities[i];
                 let damage = &mut entity.damage.content;
                 if !damage.is_empty() {
-                    entity.hp = entity.hp.saturating_sub(damage.parse().unwrap());
+                    entity.hp.0 = entity.hp.0.saturating_sub(damage.parse().unwrap());
                     damage.clear();
+                    if entity.concentrating.value {
+                        commands.push(async move {
+                            Message::HighlightConcentration(i, Instant::now() + Duration::from_millis(1400))
+                        }.into());
+                    }
+                }
+            }
+            Message::HighlightConcentration(i, highlight_done) => {
+                let now = Instant::now();
+                if highlight_done > now {
+                    self.highlight_state = Some((i, container::Style {
+                        text_color: {
+                            let millis = highlight_done.duration_since(now).as_millis();
+                            let r = 1.0 - (millis % 700) as f32 / 1400.0;
+                            Some(Color::new(r, 0.0, 0.0, 1.0))
+                        },
+                        background: Color::TRANSPARENT.into(),
+                        ..Box::<dyn container::StyleSheet>::from(self.style).style()
+                    }));
+                    commands.push(async move {
+                        tokio::time::sleep(Duration::from_millis(15)).await;
+                        Message::HighlightConcentration(i, highlight_done)
+                    }.into())
+                } else {
+                    self.highlight_state = None;
                 }
             }
             Message::EditHealing(i, healing) => {
@@ -430,54 +490,59 @@ impl Application for InitiativeManager {
                 let entity = &mut self.entities[i];
                 let heal = &mut entity.heal.content;
                 if !heal.is_empty() {
-                    entity.hp += heal.parse::<u32>().unwrap();
+                    entity.hp.0 += heal.parse::<u32>().unwrap();
                     heal.clear();
                 }
             }
             Message::Reaction(i) => self.entities[i].reaction_free.invert(),
+            Message::Concentrate(i) => self.entities[i].concentrating.invert(),
             Message::LegActionMinus(i) => {
-                if let Some((_, left)) = &mut self.entities[i].legendary_actions {
+                if let Some(Hidden((_, left), _)) = &mut self.entities[i].legendary_actions {
                     *left -= 1;
                 }
             }
             Message::LegActionPlus(i) => {
-                if let Some((_, left)) = &mut self.entities[i].legendary_actions {
+                if let Some(Hidden((_, left), _)) = &mut self.entities[i].legendary_actions {
                     *left += 1;
                 }
             }
             Message::MoveUp(i) => self.entities.swap(i, i - 1),
             Message::MoveDown(i) => self.entities.swap(i, i + 1),
-            Message::NewName(name) => self.new_entity.name.content = name,
+            Message::NewName(name) => self.new_entity.name.0.content = name,
             Message::NewInit(init) => {
                 if init.is_empty() || init == "-" || init == "+" || init.parse::<i32>().is_ok() {
-                    self.new_entity.init.content = init;
+                    self.new_entity.init.0.content = init;
                 }
             }
             Message::NewHp(hp) => {
                 if hp.is_empty() || hp.parse::<Hp>().is_ok() {
-                    println!("hp = {:?}", hp);
-                    self.new_entity.hp.content = hp;
+                    self.new_entity.hp.0.content = hp;
                 }
             }
             Message::NewLas(las) => {
                 if las.is_empty() || las.parse::<u32>().is_ok() {
-                    self.new_entity.leg_acts.content = las;
+                    self.new_entity.leg_acts.0.content = las;
                 }
             }
-            Message::NewHidden(hidden) => self.new_entity.hidden = hidden,
+            Message::NewHidden(hidden, part) => match part {
+                HideablePart::Name => self.new_entity.name.1 = hidden,
+                HideablePart::Hp => self.new_entity.hp.1 = hidden,
+                HideablePart::LegActs => self.new_entity.leg_acts.1 = hidden,
+                HideablePart::Initiative => self.new_entity.init.1 = hidden,
+            },
             Message::NewEntitySubmit => {
-                if !self.new_entity.name.content.is_empty() {
+                if !self.new_entity.name.0.content.is_empty() {
                     let NewEntity {
-                        name: TextInputState { content: name, .. },
-                        init: TextInputState { content: init, .. },
-                        hp: TextInputState { content: hp, .. },
-                        leg_acts: TextInputState { content: leg_acts, .. },
-                        hidden
+                        name: Hidden(TextInputState { content: name, .. }, name_hidden),
+                        init: Hidden(TextInputState { content: init, .. }, init_hidden),
+                        hp: Hidden(TextInputState { content: hp, .. }, hp_hidden),
+                        leg_acts: Hidden(TextInputState { content: leg_acts, .. }, leg_acts_hidden),
                     } = std::mem::take(&mut self.new_entity);
                     let hp = if hp.is_empty() {
-                        Hp::Number(0)
+                        Hp::new(0)
                     } else { hp.parse().unwrap() }
-                        .into_number();
+                        .into_number()
+                        .unwrap_or(0);
                     let init = if init.is_empty() || init.starts_with(['+', '-']) {
                         let modifier = init.parse().unwrap_or(0);
                         let roll = rand::thread_rng().gen_range(1..=20);
@@ -485,11 +550,15 @@ impl Application for InitiativeManager {
                     } else {
                         init.parse().unwrap()
                     };
-                    let mut entity = Entity::new(name, hp, init, hidden);
+                    let mut entity = Entity::new(
+                        Hidden(name, name_hidden),
+                        Hidden(hp, hp_hidden),
+                        Hidden(init, init_hidden),
+                    );
                     if !leg_acts.is_empty() {
                         let leg_acts = leg_acts.parse().unwrap();
                         if leg_acts != 0 {
-                            entity.legendary_actions = Some((leg_acts, leg_acts));
+                            entity.legendary_actions = Some((leg_acts, leg_acts).hidden(leg_acts_hidden));
                         }
                     }
                     Self::insert_entity(&mut self.entities, &mut self.turn, entity)
@@ -510,10 +579,10 @@ impl Application for InitiativeManager {
                         }
                     };
                     cycle(&mut [
-                        &mut self.new_entity.name.state,
-                        &mut self.new_entity.init.state,
-                        &mut self.new_entity.hp.state,
-                        &mut self.new_entity.leg_acts.state,
+                        &mut self.new_entity.name.0.state,
+                        &mut self.new_entity.init.0.state,
+                        &mut self.new_entity.hp.0.state,
+                        &mut self.new_entity.leg_acts.0.state,
                     ]);
                     match &mut self.save_mode {
                         SaveMode::LoadParty(_, _, _, rows) => {
@@ -530,7 +599,7 @@ impl Application for InitiativeManager {
                 self.turn = (self.turn + 1).checked_rem(self.entities.len()).unwrap_or(0);
                 if let Some(entity) = self.entities.get_mut(self.turn) {
                     entity.reaction_free.value = true;
-                    if let Some((tot, left)) = &mut entity.legendary_actions {
+                    if let Some(Hidden((tot, left), _)) = &mut entity.legendary_actions {
                         *left = *tot;
                     }
                 }
@@ -544,12 +613,11 @@ impl Application for InitiativeManager {
                 match &mut self.save_mode {
                     SaveMode::SaveEncounter(name, _) if !name.content.is_empty() => {
                         let enemies = self.entities.iter()
-                            .map(|Entity { name, hp, initiative, legendary_actions, hidden_toggle, .. }| Enemy {
+                            .map(|Entity { name, hp, initiative, legendary_actions, .. }| Enemy {
                                 name: name.clone(),
                                 hp: *hp,
-                                legendary_actions: legendary_actions.map(|las| las.0),
+                                legendary_actions: legendary_actions.map(|Hidden((las, _), hidden)| Hidden(las, hidden)),
                                 initiative: *initiative,
-                                hidden: hidden_toggle.value,
                             }).collect_vec();
                         let file = OpenOptions::new()
                             .create(true)
@@ -560,7 +628,7 @@ impl Application for InitiativeManager {
 
                         self.save_mode = SaveMode::None;
                     }
-                    other => *other = SaveMode::SaveEncounter(Default::default(), Default::default()),
+                    other => *other = SaveMode::SaveEncounter(TextInputState::focused(), Default::default()),
                 }
             }
             Message::EncounterName(name) => match &mut self.save_mode {
@@ -578,7 +646,7 @@ impl Application for InitiativeManager {
 
                         self.save_mode = SaveMode::None;
                     }
-                    other => *other = SaveMode::DeleteEncounter(name, Default::default(), Default::default())
+                    other => *other = SaveMode::DeleteEncounter(name, TextInputState::focused(), Default::default())
                 }
             }
             Message::LoadEncounter(name) => {
@@ -586,10 +654,10 @@ impl Application for InitiativeManager {
                 match &mut self.save_mode {
                     SaveMode::LoadEncounter(curr_name, _, _, rows) if name == *curr_name => {
                         rows.drain(0..)
-                            .map(|Enemy { name, hp, legendary_actions: legendary_reactions, initiative, hidden }| {
-                                Entity::new(name, hp, initiative, hidden)
-                                    .tap_if_some(legendary_reactions, |mut e, lrs| {
-                                        e.legendary_actions = Some((lrs, lrs));
+                            .map(|Enemy { name, hp, legendary_actions, initiative }| {
+                                Entity::new(name, hp, initiative)
+                                    .tap_if_some(legendary_actions, |mut e, Hidden(las, hidden)| {
+                                        e.legendary_actions = Some(Hidden((las, las), hidden));
                                         e
                                     })
                             }).for_each(|e| Self::insert_entity(&mut self.entities, &mut self.turn, e));
@@ -609,12 +677,23 @@ impl Application for InitiativeManager {
                     }
                 }
             }
+            Message::EncounterHide(idx, hide, part) => match &mut self.save_mode {
+                SaveMode::LoadEncounter(_, _, _, enemies) => match part {
+                    HideablePart::Name => enemies[idx].name.1 = hide,
+                    HideablePart::Hp => enemies[idx].hp.1 = hide,
+                    HideablePart::LegActs => if let Some(las) = &mut enemies[idx].legendary_actions {
+                        las.1 = hide;
+                    },
+                    HideablePart::Initiative => enemies[idx].initiative.1 = hide,
+                }
+                _ => {}
+            },
             Message::SaveParty => {
                 // create name field, once submitted save names and HP of all entities
                 match &mut self.save_mode {
                     SaveMode::SaveParty(name, _) if !name.content.is_empty() => {
                         let pcs = self.entities.iter()
-                            .map(|Entity { name, hp, .. }| Pc { name: name.clone(), hp: *hp })
+                            .map(|Entity { name, hp, .. }| Pc { name: name.0.clone(), hp: hp.0 })
                             .collect_vec();
                         let file = OpenOptions::new()
                             .create(true)
@@ -625,7 +704,7 @@ impl Application for InitiativeManager {
 
                         self.save_mode = SaveMode::None;
                     }
-                    other => *other = SaveMode::SaveParty(Default::default(), Default::default()),
+                    other => *other = SaveMode::SaveParty(TextInputState::focused(), Default::default()),
                 };
             }
             Message::PartyName(name) => match &mut self.save_mode {
@@ -643,7 +722,7 @@ impl Application for InitiativeManager {
 
                         self.save_mode = SaveMode::None;
                     }
-                    other => *other = SaveMode::DeleteParty(name, Default::default(), Default::default())
+                    other => *other = SaveMode::DeleteParty(name, TextInputState::focused(), Default::default())
                 }
             }
             Message::LoadParty(name) => {
@@ -652,7 +731,7 @@ impl Application for InitiativeManager {
                     SaveMode::LoadParty(curr_name, _, _, rows) if name == *curr_name => {
                         rows.drain(0..)
                             .map(|(Pc { name, hp }, txt)| {
-                                Entity::new(name, hp, txt.content.parse().unwrap(), false)
+                                Entity::new(name.hidden(false), hp.hidden(false), Hidden(txt.content.parse().unwrap(), false))
                             }).for_each(|e| Self::insert_entity(&mut self.entities, &mut self.turn, e));
 
                         self.save_mode = SaveMode::None;
@@ -662,11 +741,14 @@ impl Application for InitiativeManager {
                             .read(true)
                             .open(PARTY_DIR.join(format!("{name}.json")))
                             .unwrap();
-                        let rows = serde_json::from_reader::<_, Vec<Pc>>(file)
+                        let mut rows: Vec<_> = serde_json::from_reader::<_, Vec<Pc>>(file)
                             .unwrap()
                             .into_iter()
-                            .map(|pc| (pc, Default::default()))
+                            .map(|pc| (pc, TextInputState::default()))
                             .collect();
+                        if let Some((_, TextInputState { state, .. })) = rows.first_mut() {
+                            state.focus();
+                        }
                         *other = SaveMode::LoadParty(name, Default::default(), Default::default(), rows)
                     }
                 }
@@ -677,7 +759,7 @@ impl Application for InitiativeManager {
                 }
             },
         };
-        Command::none()
+        Command::batch(commands)
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
@@ -718,27 +800,30 @@ impl Application for InitiativeManager {
         const HP_MOD_WIDTH: u16 = 26;
         const COLUMN_WIDTH_RATIO: (u16, u16) = (3, 2);
 
-        let visible = self.visible.value;
+        let dm_view = self.dm_view.value;
         let style = self.style;
         let width = self.width;
         let init_width = (width as u16 * COLUMN_WIDTH_RATIO.0) as f64 / (COLUMN_WIDTH_RATIO.0 + COLUMN_WIDTH_RATIO.1) as f64;
+        let options_width = width as f64 - init_width;
 
         let has_legendary_action = self.entities.iter()
             .any(|e| e.legendary_actions.is_some());
 
         let spacing_w = 1.0;
-        let name_w = 7.0;
+        let name_w = 5.0;
         let hp_w = 3.0;
         let reaction_w = 4.0;
+        let conc_w = 4.0;
         let leg_acts_w = if has_legendary_action { 5.0 } else { 0.0 };
         let initiative_w = 4.0;
         let num_spaces = (3 + has_legendary_action as u32) as f64;
-        let denominator = spacing_w * num_spaces + name_w + hp_w + reaction_w + leg_acts_w + initiative_w;
+        let denominator = spacing_w * num_spaces + name_w + hp_w + reaction_w + conc_w + leg_acts_w + initiative_w;
 
         let spacing_w = init_width * spacing_w / denominator;
         let name_w = init_width * name_w / denominator;
         let hp_w = init_width * hp_w / denominator;
         let reaction_w = init_width * reaction_w / denominator;
+        let conc_w = init_width * conc_w / denominator;
         let leg_acts_w = init_width * leg_acts_w / denominator;
         let initiative_w = init_width * initiative_w / denominator;
 
@@ -748,13 +833,17 @@ impl Application for InitiativeManager {
         let mut up_down = vec![false];
         up_down.extend(
             self.entities.array_windows::<2>()
-                .map(|[a, b]| a.initiative == b.initiative)
+                .map(|[a, b]| a.initiative.0 == b.initiative.0)
                 .flat_map(|bool| [bool, bool])
         );
         up_down.push(false);
         let up_down = up_down.array_chunks::<2>().collect_vec();
 
         let (end, start) = self.entities.split_at_mut(turn);
+        let highlight = self.highlight_state.map(|(mut idx, style)| {
+            idx = (idx as isize - turn as isize).wrapping_rem_euclid(n_entities as _) as _;
+            (idx, style)
+        });
 
         let scrollable = start.iter_mut()
             .chain(end.iter_mut())
@@ -767,25 +856,33 @@ impl Application for InitiativeManager {
                             .align_items(Align::Center)
                             .spacing(spacing_w as _)
                             .push(Text::new("Name")
+                                .size(17)
                                 .width(Length::Units(name_w as _)))
                             .push(Text::new("HP")
+                                .size(17)
                                 .horizontal_alignment(HorizontalAlignment::Center)
                                 .width(Length::Units(hp_w as _)))
                             .push(Text::new("Reaction Free")
+                                .size(17)
                                 .horizontal_alignment(HorizontalAlignment::Center)
                                 .width(Length::Units(reaction_w as _)))
+                            .push(Text::new("Concentrating")
+                                .size(17)
+                                .horizontal_alignment(HorizontalAlignment::Center)
+                                .width(Length::Units(conc_w as _)))
                             .tap_if(has_legendary_action, |row| row
                                 .push(Text::new("Legendary Actions ")
+                                    .size(17)
                                     .horizontal_alignment(HorizontalAlignment::Center)
                                     .width(Length::Units(leg_acts_w as _))))
                             .push(Text::new("Initiative")
+                                .size(17)
                                 .horizontal_alignment(HorizontalAlignment::Center)
                                 .width(Length::Units(initiative_w as u16)))
                     )
                         .padding(INITIATIVES_INTERIOR_PADDING)
                         .style(style.initiative_table(1))),
                 |col, (i, Entity {
-                    hidden_toggle,
                     name,
                     // censored_name,
                     remove_state,
@@ -793,6 +890,7 @@ impl Application for InitiativeManager {
                     damage,
                     heal,
                     reaction_free,
+                    concentrating,
                     legendary_actions,
                     la_minus,
                     la_plus,
@@ -801,20 +899,20 @@ impl Application for InitiativeManager {
                     init_down,
                 })| {
                     let idx = (i + turn) % n_entities;
-                    let hidden = hidden_toggle.value;
-                    let is_visible = !hidden || visible;
+                    // let hidden = hidden_toggle.value;
+                    // let is_visible = !hidden || dm_view;
                     let style = style.initiative_table(i);
 
-                    let hide_entity_button = hidden_toggle.button_with(|text| text.size(16))
-                        .style(style)
-                        .on_press(Message::ToggleHidden(idx));
+                    // let hide_entity_button = hidden_toggle.button_with(|text| text.size(16))
+                    //     .style(style)
+                    //     .on_press(Message::ToggleHidden(idx));
                     let name = Button::new(
-                        remove_state, Text::new(if is_visible {
-                            (*name).to_string()
+                        remove_state, Text::new(if dm_view || !name.1 {
+                            name.0.to_string()
                         } else {
                             // censored_name.clone()
-                            censor_name(name)
-                        }),
+                            censor_name(&name.0)
+                        }).size(16),
                     ).style(style)
                         .padding(0)
                         .width(Length::Fill)
@@ -822,30 +920,31 @@ impl Application for InitiativeManager {
                     let name = Container::new(
                         Row::new()
                             .align_items(Align::Center)
-                            .tap_if(!visible, |row| row
-                                .push(hide_entity_button)
-                                .push_space(5))
+                            // .tap_if(!dm_view, |row| row
+                            //     .push(hide_entity_button)
+                            //     .push_space(5))
                             .push(name))
                         .align_x(Align::Start)
                         .style(style);
 
-                    let hp = Text::new(if is_visible {
-                        hp.to_string()
+                    let hp = Text::new(if dm_view || !hp.1 {
+                        hp.0.to_string()
                     } else {
                         "??".to_string()
-                    }).horizontal_alignment(HorizontalAlignment::Right);
+                    }).horizontal_alignment(HorizontalAlignment::Right)
+                        .size(16);
                     let damage = damage.text_input(
                         "damage",
                         move |s| Message::EditDamage(idx, s),
                     ).style(style)
-                        .size(8)
+                        .size(9)
                         .width(Length::Units(HP_MOD_WIDTH))
                         .on_submit(Message::Damage(idx));
                     let heal = heal.text_input(
                         "heal",
                         move |s| Message::EditHealing(idx, s),
                     ).style(style)
-                        .size(8)
+                        .size(9)
                         .width(Length::Units(HP_MOD_WIDTH))
                         .on_submit(Message::Heal(idx));
                     let hp_mods = Column::new()
@@ -858,7 +957,7 @@ impl Application for InitiativeManager {
                             .push(hp
                                 .horizontal_alignment(HorizontalAlignment::Center)
                                 .width(Length::Shrink))
-                            .tap_if(is_visible, |row| row
+                            .tap_if(dm_view, |row| row
                                 .push_space(CONTROL_SPACING)
                                 .push(hp_mods.width(Length::Shrink)))
                     )
@@ -869,14 +968,35 @@ impl Application for InitiativeManager {
                         .style(style)
                         .on_press(Message::Reaction(idx));
 
-                    let legendary_actions = if let Some((tot, left)) = legendary_actions {
-                        let mut minus = Button::new(la_minus, Text::new(" - "))
+                    let conc = concentrating.button_with(|txt| {
+                        let mut cont = Container::new(txt)
+                            .align_x(Align::Center)
+                            .style(style);
+                        match highlight {
+                            Some((idx, style)) if idx == i => {
+                                struct ContainerStyle(container::Style);
+                                impl container::StyleSheet for ContainerStyle {
+                                    fn style(&self) -> container::Style {
+                                        self.0
+                                    }
+                                }
+                                cont = cont.style(ContainerStyle(style));
+                            }
+                            _ => {}
+                        };
+                        cont
+                    })
+                        .style(style)
+                        .on_press(Message::Concentrate(idx));
+
+                    let legendary_actions = if let Some(Hidden((tot, left), _)) = legendary_actions {
+                        let mut minus = Button::new(la_minus, Text::new(" - ").size(16))
                             .padding(0)
                             .style(style);
                         if *left != 0 {
                             minus = minus.on_press(Message::LegActionMinus(idx));
                         }
-                        let mut plus = Button::new(la_plus, Text::new(" + "))
+                        let mut plus = Button::new(la_plus, Text::new(" + ").size(16))
                             .padding(0)
                             .style(style);
                         if *left != *tot {
@@ -886,7 +1006,7 @@ impl Application for InitiativeManager {
                             .spacing(2)
                             .align_items(Align::Center)
                             .push(minus)
-                            .push(Text::new(roman::to(*left as _).unwrap_or_else(String::new)))
+                            .push(Text::new(roman::to(*left as _).unwrap_or_else(String::new)).size(16))
                             .push(plus)
                     } else {
                         Row::new()
@@ -897,7 +1017,8 @@ impl Application for InitiativeManager {
 
                     let &[move_up, move_down] = up_down[idx];
                     // let initiative = Text::new(format!("{} ({})", initiative, tiebreaker));
-                    let initiative = Text::new(initiative.to_string())
+                    let initiative = Text::new(initiative.0.to_string())
+                        .size(16)
                         .horizontal_alignment(HorizontalAlignment::Left);
                     let mut up = Button::new(
                         init_up,
@@ -954,6 +1075,9 @@ impl Application for InitiativeManager {
                             .push_space(Length::Units(spacing_w as _))
                             .push(reaction
                                 .width(Length::Units(reaction_w as _)))
+                            .push_space(Length::Units(spacing_w as _))
+                            .push(conc
+                                .width(Length::Units(conc_w as _)))
                             .tap_if(has_legendary_action, |row| row
                                 .push_space(Length::Units(spacing_w as _))
                                 .push(legendary_actions
@@ -994,13 +1118,13 @@ impl Application for InitiativeManager {
             .push_space(Length::FillPortion(2));
 
         let new_ready = {
-            let hp_empty = self.new_entity.hp.content.is_empty();
-            let hp_parses = matches!(
-                self.new_entity.hp.content.parse::<Hp>(),
-                Ok(Hp::Number(_) | Hp::Roll { .. })
-            );
+            let hp_empty = self.new_entity.hp.0.content.is_empty();
+            let hp_parses = self.new_entity.hp.0.content.parse::<Hp>()
+                .ok()
+                .and_then(|hp| hp.into_number())
+                .is_some();
             let hp_ready = hp_empty || hp_parses;
-            let name_ready = !self.new_entity.name.content.is_empty();
+            let name_ready = !self.new_entity.name.0.content.is_empty();
             hp_ready && name_ready
         };
 
@@ -1011,54 +1135,86 @@ impl Application for InitiativeManager {
             .tap_if(new_ready,
                     |btn| btn.on_press(Message::NewEntitySubmit));
 
-        let new_name = self.new_entity.name.text_input(
+        let hide_msg = |part| move |hide| Message::NewHidden(hide, part);
+
+        let new_name = self.new_entity.name.0.text_input(
             "Name",
             Message::NewName,
         ).style(style)
             .tap_if(new_ready,
                     |txt| txt.on_submit(Message::NewEntitySubmit));
+        let hide = Checkbox::new(
+            self.new_entity.name.1,
+            "Hide?",
+            hide_msg(HideablePart::Name),
+        ).style(style);
+        let new_name = Row::new()
+            .push(new_name.width(Length::FillPortion(2)))
+            .push_space(Length::Fill)
+            .push(hide);
 
         // should display a d20 somehow if you put like +3 (it'll roll)
-        let new_init = self.new_entity.init.text_input(
+        let new_init = self.new_entity.init.0.text_input(
             "init or ±mod",
             Message::NewInit,
         ).style(style)
             .tap_if(new_ready,
                     |txt| txt.on_submit(Message::NewEntitySubmit));
+        let hide = Checkbox::new(
+            self.new_entity.init.1,
+            "Hide?",
+            hide_msg(HideablePart::Initiative),
+        ).style(style);
+        let new_init = Row::new()
+            .push(new_init.width(Length::FillPortion(2)))
+            .push_space(Length::Fill)
+            .push(hide);
 
-        let new_hp = self.new_entity.hp.text_input(
+        let new_hp = self.new_entity.hp.0.text_input(
             "hp",
             Message::NewHp,
         ).style(style)
             .tap_if(new_ready,
                     |txt| txt.on_submit(Message::NewEntitySubmit));
+        let hide = Checkbox::new(
+            self.new_entity.hp.1,
+            "Hide?",
+            hide_msg(HideablePart::Hp),
+        ).style(style);
+        let new_hp = Row::new()
+            .push(new_hp.width(Length::FillPortion(2)))
+            .push_space(Length::Fill)
+            .push(hide);
 
-        let new_las = self.new_entity.leg_acts.text_input(
+        let new_las = self.new_entity.leg_acts.0.text_input(
             "# of legendary actions",
             Message::NewLas,
         ).style(style)
             .tap_if(new_ready,
                     |txt| txt.on_submit(Message::NewEntitySubmit));
-
-        let new_hidden = Checkbox::new(
-            self.new_entity.hidden,
-            "Secret?",
-            Message::NewHidden,
+        let hide = Checkbox::new(
+            self.new_entity.leg_acts.1,
+            "Hide?",
+            hide_msg(HideablePart::LegActs),
         ).style(style);
+        let new_las = Row::new()
+            .push(new_las.width(Length::FillPortion(2)))
+            .push_space(Length::Fill)
+            .push(hide);
 
         let save_encounter = Button::new(
             &mut self.save_encounter,
-            Text::new("Save Encounter").size(16),
+            Text::new("Save Encounter").size(14),
         ).style(style)
             .on_press(Message::SaveEncounter);
 
-        let start = Instant::now();
+        // let start = Instant::now();
         let encounters = fs::read_dir(&*ENCOUNTER_DIR).unwrap()
             .flatten()
             .filter(|entry| entry.file_type().ok().filter(FileType::is_file).is_some())
             .map(|entry| entry.path().file_stem().unwrap().to_string_lossy().into_owned())
             .collect_vec();
-        println!("read encounters = {:?}", start.elapsed());
+        // println!("read encounters = {:?}", start.elapsed());
 
         let delete_encounter = PickList::new(
             &mut self.delete_encounter,
@@ -1066,7 +1222,7 @@ impl Application for InitiativeManager {
             Some(String::from("Delete Encounter")),
             Message::DeleteEncounter,
         ).style(style)
-            .text_size(16);
+            .text_size(14);
 
         let load_encounter = PickList::new(
             &mut self.load_encounter,
@@ -1074,22 +1230,22 @@ impl Application for InitiativeManager {
             Some(String::from("Load Encounter")),
             Message::LoadEncounter,
         ).style(style)
-            .text_size(16);
+            .text_size(14);
 
         let save_party = Button::new(
             &mut self.save_party,
-            Text::new("Save Players").size(16),
+            Text::new("Save Players").size(14),
         ).style(style)
             .on_press(Message::SaveParty);
 
         // todo store the saved ones and then have it watch the directory for updates
-        let start = Instant::now();
+        // let start = Instant::now();
         let parties = fs::read_dir(&*PARTY_DIR).unwrap()
             .flatten()
             .filter(|entry| entry.file_type().ok().filter(FileType::is_file).is_some())
             .map(|entry| entry.path().file_stem().unwrap().to_string_lossy().into_owned())
             .collect_vec();
-        println!("read parties = {:?}", start.elapsed());
+        // println!("read parties = {:?}", start.elapsed());
 
         let delete_party = PickList::new(
             &mut self.delete_party,
@@ -1097,7 +1253,7 @@ impl Application for InitiativeManager {
             Some(String::from("Delete Players")),
             Message::DeleteParty,
         ).style(style)
-            .text_size(16);
+            .text_size(14);
 
         let load_party = PickList::new(
             &mut self.load_party,
@@ -1105,7 +1261,7 @@ impl Application for InitiativeManager {
             Some(String::from("Load Players")),
             Message::LoadParty,
         ).style(style)
-            .text_size(16);
+            .text_size(14);
 
         let new_entity_col = Container::new(
             Column::new()
@@ -1116,37 +1272,30 @@ impl Application for InitiativeManager {
                     .align_items(Align::Center)
                     .push(submit_new_button)
                     .push_space(15)
-                    .push(Row::new()
-                        .push(new_name.width(Length::FillPortion(2)))
-                        .push_space(6)
-                        .push(new_init.width(Length::FillPortion(1)))
-                    )
+                    .push(new_name)
+                    .push_space(6)
+                    .push(new_init)
+                    .push_space(6)
+                    .push(new_hp)
+                    .push_space(6)
+                    .push(new_las)
                 )
-                .push_space(5)
-                .push(Row::new()
-                    .push(new_hp.width(Length::FillPortion(1)))
-                    .push_space(3)
-                    .push(new_las.width(Length::FillPortion(1)))
-                    .push_space(3)
-                    .push(new_hidden.width(Length::FillPortion(1)))
-                )
-                .push_space(100)
-                .push_rule(20)
+                .push_rule(40)
                 .push(Container::new(Row::new()
                     .push(Column::new()
-                        .push(save_encounter)
+                        .push(save_encounter.width(Length::Units((options_width / 3.3) as _)))
                         .push_space(10)
-                        .push(save_party))
-                    .push_space(12)
+                        .push(save_party.width(Length::Units((options_width / 3.3) as _))))
+                    .push_space(Length::Fill)
                     .push(Column::new()
-                        .push(delete_encounter)
+                        .push(delete_encounter.width(Length::Units((options_width / 3.3) as _)))
                         .push_space(10)
-                        .push(delete_party))
-                    .push_space(12)
+                        .push(delete_party.width(Length::Units((options_width / 3.3) as _))))
+                    .push_space(Length::Fill)
                     .push(Column::new()
-                        .push(load_encounter)
+                        .push(load_encounter.width(Length::Units((options_width / 3.3) as _)))
                         .push_space(10)
-                        .push(load_party))
+                        .push(load_party.width(Length::Units((options_width / 3.3) as _))))
                 ).width(Length::Shrink))
                 .tap_if(
                     !matches!(self.save_mode, SaveMode::None),
@@ -1155,10 +1304,10 @@ impl Application for InitiativeManager {
         ).padding(8)
             .center_x();
 
-        let toggle_visibility = self.visible.button_with(|text| text.size(12))
+        let toggle_visibility = self.dm_view.button_with(|text| text.size(12))
             .style(style.settings_bar())
             .on_press(Message::ToggleVisibility)
-            .tooltip(if visible { "Hide Secret Stats" } else { "Show Secret Stats" }, Position::Top)
+            .tooltip(if dm_view { "Hide Secret Stats" } else { "Show Secret Stats" }, Position::Top)
             .size(10);
 
         let toggle_style = Button::new(
@@ -1204,7 +1353,7 @@ impl Application for InitiativeManager {
 impl InitiativeManager {
     fn insert_entity(entities: &mut Vec<Entity>, turn: &mut usize, entity: Entity) {
         let index = entities.iter()
-            .position(|e| e.initiative < entity.initiative)
+            .position(|e| e.initiative.0 < entity.initiative.0)
             .unwrap_or(entities.len());
         entities.insert(index, entity);
         if *turn >= index {
